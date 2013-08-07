@@ -1,0 +1,34 @@
+{
+	"name" : "bread/storage",
+	"description" : "Bread storage library",
+	"type" : "library",
+	"authors" : [{
+			"name" : "Giovanni Lovato",
+			"email" : "heruan@aldu.net"
+		}
+	],
+	"keywords" : [
+		"bread",
+		"storage",
+		"database",
+		"datastore",
+		"hydration",
+		"orm",
+		"odm"
+	],
+	"homepage" : "https://github.com/breadphp/storage",
+	"license" : [
+		"CC-BY-3.0"
+	],
+	"require" : {
+		"bread/caching" : "~1.0",
+		"doctrine/dbal" : "~2",
+		"php" : ">=5.4",
+		"bread/configuration" : "~1.0"
+	},
+	"autoload" : {
+		"psr-0" : {
+			"Bread\\Storage" : "src"
+		}
+	}
+}
