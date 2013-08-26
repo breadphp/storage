@@ -19,8 +19,11 @@ class Doctrine implements Driver
     const OBJECTID_FIELD_NAME = '_id';
     const OBJECTID_FIELD_TYPE = 'guid';
     const MULTIPLE_PROPERTY_INDEX_FIELD_NAME = '_key';
-    const MULTIPLE_PROPERTY_INDEX_FIELD_TYPE = 'integer';
+    const MULTIPLE_PROPERTY_INDEX_FIELD_TYPE = Type::INTEGER;
     const MULTIPLE_PROPERTY_TABLE_SEPARATOR = '-';
+    const TAGGABLE_PROPERTY_INDEX_FIELD_NAME = '_tag';
+    const TAGGABLE_PROPERTY_INDEX_FIELD_TYPE = Type::STRING;
+    const TAGGABLE_PROPERTY_TABLE_SEPARATOR = '-';
 
     protected $link;
     
@@ -125,7 +128,6 @@ class Doctrine implements Driver
               throw new Exception('Object instance cannot be stored');
         }
         $class = $instance->getClass();
-        var_dump($instance->getModifiedProperties($object));
         $this->link->beginTransaction();
         return $this->denormalize($instance->getModifiedProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
             $tables = $this->tablesFor($instance);
@@ -137,9 +139,11 @@ class Doctrine implements Driver
                     continue;
                 }
                 $fields = array_keys($values);
+                $isMultiple = $propertyName ? ConfigurationManager::get($class, "properties.$propertyName.multiple") : false;
+                $isTaggable = $propertyName ? ConfigurationManager::get($class, "properties.$propertyName.taggable") : false;
                 switch ($instance->getState()) {
                   case Instance::STATE_NEW:
-                      if ($propertyName) {
+                      if ($isMultiple) {
                           foreach ((array) $values[$propertyName] as $key => $value) {
                               $this->link->insert($tableName, array(
                                   self::OBJECTID_FIELD_NAME => $oid,
@@ -147,14 +151,28 @@ class Doctrine implements Driver
                                   $propertyName => $value
                               ));
                           }
-                      }
-                      else {
+                      } elseif ($isTaggable) {
+                          foreach ((array) $values[$propertyName] as $key => $value) {
+                              $this->link->insert($tableName, array(
+                                  self::OBJECTID_FIELD_NAME => $oid,
+                                  self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $key,
+                                  $propertyName => $value
+                              ));
+                          }
+                      } else {
                           $values[self::OBJECTID_FIELD_NAME] = $oid;
                           $this->link->insert($tableName, $values);
+                          foreach (ConfigurationManager::get($class, "keys") as $keyProperty) {
+                              switch (ConfigurationManager::get($class, "properties.$keyProperty.strategy")) {
+                                case 'autoincrement':
+                                    $object->$keyProperty = (int) $this->link->lastInsertId();
+                                    break;
+                              }
+                          }
                       }
                       break;
                   case Instance::STATE_MANAGED:
-                      if ($propertyName) {
+                      if ($isMultiple) {
                           $existingQueryBuilder = $this->link->createQueryBuilder();
                           $existingQueryBuilder->select(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME)->from($tableName, 't')
                             ->where($existingQueryBuilder->expr()->eq(self::OBJECTID_FIELD_NAME, $existingQueryBuilder->createNamedParameter($oid)));
@@ -180,15 +198,45 @@ class Doctrine implements Driver
                               self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME,
                               $queryBuilder->createNamedParameter(count($values[$propertyName]), \PDO::PARAM_INT)
                           ))->execute();
+                      } elseif ($isTaggable) {
+                          $existingQueryBuilder = $this->link->createQueryBuilder();
+                          $existingQueryBuilder->select(self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME)->from($tableName, 't')
+                              ->where($existingQueryBuilder->expr()->eq(self::OBJECTID_FIELD_NAME, $existingQueryBuilder->createNamedParameter($oid)));
+                          $existingTags = $existingQueryBuilder->execute()->fetchColumn(1);
+                          $newTags = array();
+                          foreach ((array) $values[$propertyName] as $tag => $value) {
+                              $newTags[] = $tag;
+                              if (in_array($tag, $existingTags)) {
+                                  $this->link->update($tableName, array(
+                                      $propertyName => $value
+                                  ), array(
+                                      self::OBJECTID_FIELD_NAME => $oid,
+                                      self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $tag
+                                  ));
+                              } else {
+                                  $this->link->insert($tableName, array(
+                                      self::OBJECTID_FIELD_NAME => $oid,
+                                      self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $key,
+                                      $propertyName => $value
+                                  ));
+                              }
+                          }
+                          $deletedTags = array_diff($existingTags, $newTags);
+                          array_walk($deletedTags, function($tag) use ($oid) {
+                              $this->link->delete($tableName, array(
+                                  self::OBJECTID_FIELD_NAME => $oid,
+                                  self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $tag
+                              ));
+                          });
                       } else {
                           $this->link->update($tableName, $values, array(self::OBJECTID_FIELD_NAME => $oid));
                       }
                       break;
                 }
             }
+            $this->link->commit();
             $instance->setState(Instance::STATE_MANAGED);
             $instance->setObject($object);
-            $this->link->commit();
             return $object;
         }, function($exception) {
             $this->link->rollBack();
@@ -350,8 +398,8 @@ class Doctrine implements Driver
             }
         } elseif (is_array($value)) {
             $denormalizedValuePromises = array();
-            foreach ($value as $v) {
-                $denormalizedValuePromises[] = $this->denormalizeValue($v, $field, $class);
+            foreach ($value as $k => $v) {
+                $denormalizedValuePromises[$k] = $this->denormalizeValue($v, $field, $class);
             }
             return When::all($denormalizedValuePromises);
         } else {
@@ -417,6 +465,9 @@ class Doctrine implements Driver
                   break;
             }
             $expression = call_user_func_array(array($queryBuilder->expr(), $method), $expressions);
+            if (!$expression->count()) {
+                return '1 = 1';
+            }
             return $not ? $this->link->getDatabasePlatform()->getNotExpression($expression) : $expression;
         });
     }
@@ -454,6 +505,7 @@ class Doctrine implements Driver
                         break;
                     case '$gte':
                         $function = 'gte';
+                        break;
                     case '$ne':
                         return $this->denormalizeValue($v, $property, $class)->then(function ($value) use ($queryBuilder, $property) {
                             $field = $this->link->quoteIdentifier($property);
@@ -587,11 +639,13 @@ class Doctrine implements Driver
         if (!$schema->hasTable($tableName)) {
             $table = $schema->createTable($tableName);
             $multiplePropertyTables = array();
+            $taggablePropertyTables = array();
             foreach ($instance->getReflector()->getProperties() as $property) {
                 $columnName = $property->name;
                 $propertyType = ConfigurationManager::get($class, "properties.$columnName.type");
                 $isRequired = ConfigurationManager::get($class, "properties.$columnName.required");
                 $isMultiple = ConfigurationManager::get($class, "properties.$columnName.multiple");
+                $isTaggable = ConfigurationManager::get($class, "properties.$columnName.taggable");
                 $strategy = ConfigurationManager::get($class, "properties.$columnName.strategy");
                 $default = ConfigurationManager::get($class, "properties.$columnName.default");
                 $columnType = $this->mapColumnType($propertyType);
@@ -602,6 +656,13 @@ class Doctrine implements Driver
                     $multiplePropertyTable->addColumn(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME, self::MULTIPLE_PROPERTY_INDEX_FIELD_TYPE);
                     $multiplePropertyTable->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
                     $multiplePropertyTables[] = $multiplePropertyTable;
+                } elseif ($isTaggable) {
+                    $taggablePropertyTableName = $this->getMultiplePropertyTableName($tableName, $columnName);
+                    $taggablePropertyTable = $schema->createTable($taggablePropertyTableName);
+                    $taggablePropertyTable->addColumn(self::OBJECTID_FIELD_NAME, self::OBJECTID_FIELD_TYPE);
+                    $taggablePropertyTable->addColumn(self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME, self::TAGGABLE_PROPERTY_INDEX_FIELD_TYPE);
+                    $taggablePropertyTable->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
+                    $taggablePropertyTables[] = $taggablePropertyTable;
                 }
                 else {
                     $column = $table->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
@@ -630,6 +691,11 @@ class Doctrine implements Driver
                 $multiplePropertyTable->setPrimaryKey(array(self::OBJECTID_FIELD_NAME, self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME));
                 $multiplePropertyTable->addForeignKeyConstraint($table, array(self::OBJECTID_FIELD_NAME), array(self::OBJECTID_FIELD_NAME), $foreignKeyOptions);
                 $this->schemaManager->createTable($multiplePropertyTable);
+            }
+            foreach ($taggablePropertyTables as $taggablePropertyTable) {
+                $taggablePropertyTable->setPrimaryKey(array(self::OBJECTID_FIELD_NAME, self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME));
+                $taggablePropertyTable->addForeignKeyConstraint($table, array(self::OBJECTID_FIELD_NAME), array(self::OBJECTID_FIELD_NAME), $foreignKeyOptions);
+                $this->schemaManager->createTable($taggablePropertyTable);
             }
         }
         $tableNames = array($tableName);
