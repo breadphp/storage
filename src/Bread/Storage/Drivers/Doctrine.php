@@ -1,20 +1,21 @@
 <?php
 namespace Bread\Storage\Drivers;
 
-use Bread\Storage\Interfaces\Driver;
+use Bread\Storage\Driver;
+use Bread\Storage\Interfaces\Driver as DriverInterface;
 use Bread\Storage\Hydration\Instance;
-use Doctrine\DBAL\DriverManager;
-use Doctrine\DBAL\Types\Type;
-use Bread\Promises\When;
-use Exception;
 use Bread\Storage\Hydration\Map;
-use Bread\Configuration\Manager as ConfigurationManager;
-use Bread\Promises\Interfaces\Promise;
 use Bread\Storage\Reference;
 use Bread\Storage\Manager;
+use Bread\Promises\When;
+use Bread\Promises\Interfaces\Promise;
+use Bread\Configuration\Manager as ConfigurationManager;
+use Exception;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Types\Type;
 
-class Doctrine implements Driver
+class Doctrine extends Driver implements DriverInterface
 {
     const OBJECTID_FIELD_NAME = '_id';
     const OBJECTID_FIELD_TYPE = 'guid';
@@ -260,13 +261,13 @@ class Doctrine implements Driver
             $instance->setState(Instance::STATE_DELETED);
             break;
       }
-      return $object;
+      return When::resolve($object);
     }
 
-    public function count($class, $search = array(), $options = array())
+    public function count($class, array $search = array(), array $options = array())
     {}
 
-    public function first($class, $search = array(), $options = array())
+    public function first($class, array $search = array(), array $options = array())
     {
         $options['limit'] = 1;
         return $this->fetch($class, $search, $options)->then(function ($results) {
@@ -274,7 +275,7 @@ class Doctrine implements Driver
         });
     }
 
-    public function fetch($class, $search = array(), $options = array())
+    public function fetch($class, array $search = array(), array $options = array())
     {
         $instance = new Instance($class);
         $queryBuilder = $this->link->createQueryBuilder();
@@ -311,37 +312,34 @@ class Doctrine implements Driver
                             ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
                             ->execute()->fetchAll(\PDO::FETCH_COLUMN);
                     }
-                    $objects[] = $this->hydrateRow($values, $instance);
+                    $objects[] = $this->hydrateObject($values, $oid, $instance);
                 }
             }
             return When::all($objects);
       });
     }
 
-    public function purge($class, $search = array(), $options = array())
+    public function purge($class, array $search = array(), array $options = array())
     {}
     
-    protected function hydrateRow($row, Instance $instance)
+    protected function applyOptions($queryBuilder, $options)
     {
-        $reflector = $instance->getReflector();
-        $class = $instance->getClass();
-        $object = $reflector->newInstanceWithoutConstructor();
-        $promises = array();
-        foreach ($row as $name => $value) {
-            if ($name === self::OBJECTID_FIELD_NAME) {
-                $instance->setObjectId($value);
-                continue;
+        foreach ($options as $option => $value) {
+            switch ($option) {
+              case 'sort':
+                  foreach ($value as $sort => $order) {
+                      $field = $this->link->quoteIdentifier($sort);
+                      $queryBuilder->addOrderBy($field, $order > 0 ? 'ASC' : 'DESC');
+                  }
+                  break;
+              case 'limit':
+                  $queryBuilder->setMaxResults($value);
+                  break;
+              case 'skip':
+                  $queryBuilder->setFirstResult($value);
+                  break;
             }
-            $promises[$name] = $this->normalizeValue($name, $value, $class, $reflector);
         }
-        return When::all($promises, function($properties) use ($object, $instance, $reflector) {
-            foreach ($properties as $name => $value) {
-                $property = $reflector->getProperty($name);
-                $property->setValue($object, $value);
-            }
-            $this->hydrationMap->attach($object, $instance);
-            return $object;
-        });
     }
     
     protected function normalizeValue($name, $value, $class)
@@ -356,7 +354,6 @@ class Doctrine implements Driver
             }
             return When::all($normalizedValues);
         }
-        
         $type = ConfigurationManager::get($class, "properties.$name.type");
         switch ($type) {
           default:
@@ -404,26 +401,6 @@ class Doctrine implements Driver
             return When::all($denormalizedValuePromises);
         } else {
             return When::resolve($value);
-        }
-    }
-    
-    protected function applyOptions($queryBuilder, $options)
-    {
-        foreach ($options as $option => $value) {
-            switch ($option) {
-              case 'sort':
-                  foreach ($value as $sort => $order) {
-                    $field = $this->link->quoteIdentifier($sort);
-                    $queryBuilder->addOrderBy($field, $order > 0 ? 'ASC' : 'DESC');
-                  }
-                  break;
-              case 'limit':
-                  $queryBuilder->setMaxResults($value);
-                  break;
-              case 'skip':
-                  $queryBuilder->setFirstResult($value);
-                  break;
-            }
         }
     }
     
@@ -561,6 +538,7 @@ class Doctrine implements Driver
                             ->add('select', $queryBuilder->getQueryPart('select'))
                             ->add('from', $queryBuilder->getQueryPart('from'))
                             ->add('join', $queryBuilder->getQueryPart('join'));
+                        // TODO Why not use denormalizeCondition? (could be a silly question, check)
                         return $this->denormalizeSearch($subQueryBuilder, array($not), $class)->then(function($expression) use ($queryBuilder, $subQueryBuilder) {
                             $queryBuilder->setParameters($subQueryBuilder->getParameters());
                             $subQueryBuilder->where($expression);
@@ -623,6 +601,7 @@ class Doctrine implements Driver
                 });
             }
         }
+        // TODO Check if this is redundant with the other one 
         return $this->denormalizeValue($condition, $property, $class)->then(function ($value) use ($queryBuilder, $property) {
             $field = $this->link->quoteIdentifier($property);
             return null === $value ? $this->link->getDatabasePlatform()->getIsNullExpression($field) :

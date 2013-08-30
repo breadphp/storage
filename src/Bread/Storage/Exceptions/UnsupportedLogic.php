@@ -12,20 +12,15 @@
  * @since      Bread PHP Framework
  * @license    http://creativecommons.org/licenses/by/3.0/
  */
-namespace Bread\Storage\Interfaces;
+namespace Bread\Storage\Exceptions;
 
-interface Driver
+use Exception;
+
+class UnsupportedLogic extends Exception
 {
 
-    public function store($object);
-
-    public function delete($object);
-
-    public function count($class, array $search = array(), array $options = array());
-
-    public function first($class, array $search = array(), array $options = array());
-
-    public function fetch($class, array $search = array(), array $options = array());
-
-    public function purge($class, array $search = array(), array $options = array());
+    public function __construct($driver, $logic)
+    {
+        parent::__construct(sprintf("Logic '%s' not supported on driver %s", $logic, $driver));
+    }
 }

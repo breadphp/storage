@@ -60,6 +60,15 @@ class Instance
         $this->oid = $oid;
     }
     
+    public function getPropertyNames()
+    {
+        $propertyNames = array();
+        foreach ($this->reflector->getProperties() as $property) {
+            $propertyNames[] = $property->name;
+        }
+        return $propertyNames;
+    }
+    
     public function getProperties($object)
     {
         $properties = array();
