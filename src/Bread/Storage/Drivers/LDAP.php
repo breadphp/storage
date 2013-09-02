@@ -216,7 +216,6 @@ class LDAP extends Driver implements DriverInterface
     {
         $class = $instance->getClass();
         return $this->denormalizeSearch($class, array($this->filter, $search))->then(function($filter) use ($instance, $options) {
-            var_dump($filter);
             $attributes = $instance->getPropertyNames();
             $attrsonly = static::ATTRSONLY;
             $sizelimit = isset($options['limit']) ? $options['limit'] : static::SIZELIMIT;

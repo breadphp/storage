@@ -21,7 +21,7 @@ class Map extends SplObjectStorage
         return isset($this->oidMap[$oid]) ? $this->oidMap[$oid] : false;
     }
     
-    public function attach($object, $instance)
+    public function attach($object, $instance = null)
     {
         $this->oidMap[$instance->getObjectId()] = $object;
         parent::attach($object, $instance);

@@ -27,6 +27,7 @@
 		"bread/configuration" : "~1.0"
 	},
     "require-dev" : {
+        "bread/tests" : "~0.1",
         "phpunit/phpunit" : "3.7.*"
     },
 	"autoload" : {
