@@ -612,8 +612,10 @@ class Doctrine extends Driver implements DriverInterface
     protected function tablesFor(Instance $instance)
     {
         $class = $instance->getClass();
-        $split = explode('\\', $class);
-        $tableName = array_pop($split);
+        if (!$tableName = ConfigurationManager::get($class, "storage.options.table")) {
+            $split = explode('\\', $class);
+            $tableName = array_pop($split);
+        }
         $schema = $this->schemaManager->createSchema();
         if (!$schema->hasTable($tableName)) {
             $table = $schema->createTable($tableName);
