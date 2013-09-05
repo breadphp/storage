@@ -26,4 +26,11 @@ class Map extends SplObjectStorage
         $this->oidMap[$instance->getObjectId()] = $object;
         parent::attach($object, $instance);
     }
+    
+    public function detach($object)
+    {
+        $instance = $this->getInstance($object);
+        unset($this->oidMap[$instance->getObjectId()]);
+        parent::detach($object);
+    }
 }

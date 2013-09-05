@@ -14,6 +14,7 @@ use Exception;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Type;
+use Doctrine\Common\Cache\ArrayCache;
 
 class Doctrine extends Driver implements DriverInterface
 {
@@ -30,14 +31,13 @@ class Doctrine extends Driver implements DriverInterface
     
     protected $schemaManager;
     
-    protected $hydrationMap;
-    
     // TODO Move to configuration?
     protected static $typesMap = array(
         'bool' => Type::BOOLEAN,
         'int' => Type::INTEGER,
         'float' => Type::FLOAT,
         'string' => Type::STRING,
+        'text' => Type::TEXT,
         'array' => Type::TARRAY,
         'object' => Type::BLOB,
         'resource' => Type::BLOB,
@@ -100,7 +100,7 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'driver' => 'pdo_ibm'
+                    'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'//driver' => 'pdo_ibm'
                 );
                 break;
             default:
@@ -110,6 +110,9 @@ class Doctrine extends Driver implements DriverInterface
         if (isset($options['debug']) && $options['debug']) {
             $this->link->getConfiguration()->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
         }
+        $cache = new ArrayCache();
+        $config = $this->link->getConfiguration();
+        $config->setResultCacheImpl($cache);
         $this->schemaManager = $this->link->getSchemaManager();
         $this->hydrationMap = new Map();
     }
@@ -166,7 +169,7 @@ class Doctrine extends Driver implements DriverInterface
                           foreach (ConfigurationManager::get($class, "keys") as $keyProperty) {
                               switch (ConfigurationManager::get($class, "properties.$keyProperty.strategy")) {
                                 case 'autoincrement':
-                                    $object->$keyProperty = (int) $this->link->lastInsertId();
+                                    $instance->setProperty($object, $keyProperty, (int) $this->link->lastInsertId());
                                     break;
                               }
                           }
@@ -235,11 +238,13 @@ class Doctrine extends Driver implements DriverInterface
                       break;
                 }
             }
+            return $object;
+        })->then(function ($object) use ($instance) {
             $this->link->commit();
             $instance->setState(Instance::STATE_MANAGED);
             $instance->setObject($object);
             return $object;
-        }, function($exception) {
+        }, function (Exception $exception) {
             $this->link->rollBack();
             throw $exception;
         });
@@ -295,6 +300,7 @@ class Doctrine extends Driver implements DriverInterface
             $queryBuilder->where($where);
             $this->applyOptions($queryBuilder, $options);
             $objects = array();
+            $oidIdentifier = $this->link->quoteIdentifier(self::OBJECTID_FIELD_NAME);
             foreach ($queryBuilder->execute()->fetchAll() as $row) {
                 $oid = $row[self::OBJECTID_FIELD_NAME];
                 if ($object = $this->hydrationMap->objectExists($oid)) {
@@ -302,8 +308,9 @@ class Doctrine extends Driver implements DriverInterface
                 } else {
                     $propertiesQueryBuilder = $this->link->createQueryBuilder();
                     $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
-                        ->where($propertiesQueryBuilder->expr()->eq(self::OBJECTID_FIELD_NAME, $propertiesQueryBuilder->createNamedParameter($oid)))
+                        ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
                         ->execute()->fetch(\PDO::FETCH_ASSOC);
+                    unset($values[self::OBJECTID_FIELD_NAME]);
                     foreach ($tableNames as $multiplePropertyTableName) {
                         list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
                         $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);

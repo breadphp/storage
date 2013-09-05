@@ -10,6 +10,11 @@ abstract class Driver
     protected $hydrationMap;
     
     abstract protected function normalizeValue($name, $value, $class);
+
+    public function getHydrationMap()
+    {
+        return $this->hydrationMap;
+    }
     
     protected function hydrateObject($properties, $oid, Instance $instance)
     {
@@ -24,6 +29,7 @@ abstract class Driver
         return When::all($promises, function($properties) use ($object, $instance, $reflector) {
             foreach ($properties as $name => $value) {
                 $property = $reflector->getProperty($name);
+                $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
             $this->hydrationMap->attach($object, $instance);

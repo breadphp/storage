@@ -45,9 +45,23 @@ class Instance
         return $this->object;
     }
     
+    public function getProperty($object, $name)
+    {
+        $property = $this->reflector->getProperty($name);
+        $property->setAccessible(true);
+        return $property->getValue($object);
+    }
+    
     public function setObject($object)
     {
         $this->object = clone $object;
+    }
+    
+    public function setProperty($object, $name, $value)
+    {
+        $property = $this->reflector->getProperty($name);
+        $property->setAccessible(true);
+        $property->setValue($object, $value);
     }
     
     public function getObjectId()
@@ -73,6 +87,7 @@ class Instance
     {
         $properties = array();
         foreach ($this->reflector->getProperties() as $property) {
+            $property->setAccessible(true);
             $properties[$property->name] = $property->getValue($object);
         }
         return $properties;
@@ -85,9 +100,10 @@ class Instance
         }
         $modifiedProperties = array();
         foreach ($this->reflector->getProperties() as $property) {
-            $actualValue = $property->getValue($object);
-            if ($property->getValue($this->object) !== $actualValue) {
-                $modifiedProperties[$property->name] = $actualValue;
+            $property->setAccessible(true);
+            $currentValue = $property->getValue($object);
+            if ($property->getValue($this->object) !== $currentValue) {
+                $modifiedProperties[$property->name] = $currentValue;
             }
         }
         return $modifiedProperties;
@@ -95,7 +111,9 @@ class Instance
     
     public function setProperties(array $properties) {
         foreach ($properties as $name => $value) {
-            $this->reflector->getProperty($name)->setValue($this->object, $value);
+            $property = $this->reflector->getProperty($name);
+            $property->setAccessible(true);
+            $property->setValue($this->object, $value);
         }
     }
     
