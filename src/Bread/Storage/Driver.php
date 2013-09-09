@@ -4,6 +4,8 @@ namespace Bread\Storage;
 
 use Bread\Storage\Hydration\Instance;
 use Bread\Promises\When;
+use Bread\Caching\Cache;
+use ReflectionClass;
 
 abstract class Driver
 {
@@ -16,24 +18,50 @@ abstract class Driver
         return $this->hydrationMap;
     }
     
-    protected function hydrateObject($properties, $oid, Instance $instance)
+    public function buildCollection(array $objects)
     {
-        $reflector = $instance->getReflector();
-        $class = $instance->getClass();
-        $object = $reflector->newInstanceWithoutConstructor();
-        $instance->setObjectId($oid);
+        $collection = new Collection();
+        foreach ($objects as $oid => $object) {
+            $this->hydrationMap->attach($object, new Instance($object, $oid));
+            $collection->append($object);
+        }
+        return $collection;
+    }
+    
+    protected function hydrateObject($properties, $class)
+    {
+        $reflector = new ReflectionClass($class);
         $promises = array();
         foreach ($properties as $name => $value) {
             $promises[$name] = $this->normalizeValue($name, $value, $class);
         }
-        return When::all($promises, function($properties) use ($object, $instance, $reflector) {
+        return When::all($promises, function($properties) use ($class, $reflector) {
+            $object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
                 $property = $reflector->getProperty($name);
                 $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
-            $this->hydrationMap->attach($object, $instance);
             return $object;
         });
+    }
+    
+    protected function fetchFromCache($class, array $search = array(), array $options = array())
+    {
+        $cacheKey = implode('::', array(
+            __METHOD__,
+            $class,
+            md5(serialize($search + $options))
+        ));
+        return Cache::instance()->fetch($cacheKey);
+    }
+    
+    protected function invalidateCacheFor($class)
+    {
+        $cacheKey = implode('::', array(
+            __METHOD__,
+            $class
+        ));
+        return Cache::instance()->delete('/^' . preg_quote($cacheKey, '/') . '/');
     }
 }

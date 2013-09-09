@@ -16,7 +16,7 @@ class Instance
     protected $state;
     protected $oid;
     
-    public function __construct($objectOrClassName, $state = self::STATE_MANAGED)
+    public function __construct($objectOrClassName, $oid, $state = self::STATE_MANAGED)
     {
         if (is_object($objectOrClassName)) {
             $this->className = get_class($objectOrClassName);
@@ -27,6 +27,7 @@ class Instance
             $this->reflector = new ReflectionClass($this->className);
             $this->object = $this->reflector->newInstanceWithoutConstructor();
         }
+        $this->oid = $oid;
         $this->state = $state;
     }
     
@@ -45,16 +46,16 @@ class Instance
         return $this->object;
     }
     
+    public function setObject($object)
+    {
+        $this->object = clone $object;
+    }
+    
     public function getProperty($object, $name)
     {
         $property = $this->reflector->getProperty($name);
         $property->setAccessible(true);
         return $property->getValue($object);
-    }
-    
-    public function setObject($object)
-    {
-        $this->object = clone $object;
     }
     
     public function setProperty($object, $name, $value)

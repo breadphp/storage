@@ -14,7 +14,7 @@
  */
 namespace Bread\Storage;
 
-use Bread\Configuration\Manager as CM;
+use Bread\Configuration\Manager as Configuration;
 use Bread\Storage\Exceptions;
 use Exception;
 
@@ -41,7 +41,7 @@ class Manager
         foreach ($classes as $c) {
             if (isset(static::$drivers[$c])) {
                 return static::$drivers[$c];
-            } elseif ($url = CM::get($c, "storage.url")) {
+            } elseif ($url = Configuration::get($c, "storage.url")) {
                 return static::register($url, $c);
             }
         }
@@ -51,7 +51,7 @@ class Manager
     public static function factory($url)
     {
         $scheme = parse_url($url, PHP_URL_SCHEME);
-        if (!$Driver = CM::get(__CLASS__, "drivers.$scheme")) {
+        if (!$Driver = Configuration::get(__CLASS__, "drivers.$scheme")) {
             throw new Exception("Driver for {$scheme} not found.");
         }
         if (!is_subclass_of($Driver, 'Bread\Storage\Interfaces\Driver')) {
@@ -61,7 +61,7 @@ class Manager
     }
 }
 
-CM::defaults('Bread\Storage\Manager', array(
+Configuration::defaults('Bread\Storage\Manager', array(
     'drivers' => array(
         'mongodb' => 'Bread\Storage\Drivers\MongoDB',
         'mysql' => 'Bread\Storage\Drivers\Doctrine',

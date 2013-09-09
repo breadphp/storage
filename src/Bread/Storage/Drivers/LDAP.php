@@ -15,6 +15,8 @@ use Exception;
 use Bread\Storage\Exceptions\UnsupportedOption;
 use Bread\Storage\Exceptions\UnsupportedLogic;
 use Bread\Storage\Exceptions\UnsupportedCondition;
+use Bread\Storage\Collection;
+use Bread\Caching\Cache;
 
 class LDAP extends Driver implements DriverInterface
 {
@@ -136,8 +138,10 @@ class LDAP extends Driver implements DriverInterface
                     if (!ldap_add($this->link, $oid, array_filter($properties))) {
                         throw new Exception(ldap_error($this->link));
                     }
-                    $instance->setState(Instance::STATE_MANAGED);
+                    $this->invalidateCacheFor($instance->getClass());
                     $instance->setObject($object);
+                    $instance->setState(Instance::STATE_MANAGED);
+                    $this->hydrationMap->attach($object, $instance);
                     return $object;
                 });
             case Instance::STATE_MANAGED:
@@ -145,7 +149,7 @@ class LDAP extends Driver implements DriverInterface
                     if (!ldap_modify($this->link, $oid, array_filter($properties))) {
                         throw new Exception(ldap_error($this->link));
                     }
-                    $instance->setState(Instance::STATE_MANAGED);
+                    $this->invalidateCacheFor($instance->getClass());
                     $instance->setObject($object);
                     return $object;
                 });
@@ -167,6 +171,7 @@ class LDAP extends Driver implements DriverInterface
                   throw new Exception(ldap_error($this->link));
               }
               $instance->setState(Instance::STATE_DELETED);
+              $this->invalidateCacheFor($instance->getClass());
               break;
         }
         return When::resolve($object);
@@ -189,24 +194,27 @@ class LDAP extends Driver implements DriverInterface
     
     public function fetch($class, array $search = array(), array $options = array())
     {
-        $instance = new Instance($class);
-        return $this->applyOptions($instance, $search, $options)->then(function($search) use ($instance, $class) {
-            $promises = array();
-            if (!$entry = ldap_first_entry($this->link, $search)) {
-                return $promises;
-            }
-            do {
-                $oid = ldap_get_dn($this->link, $entry);
-                if ($object = $this->hydrationMap->objectExists($oid)) {
-                    $promises[] = When::resolve($object);
+        return $this->fetchFromCache($class, $search, $options)->then(null, function($cacheKey) use ($class, $search, $options) {
+            return $this->applyOptions($instance, $search, $options)->then(function($search) use ($class) {
+                $promises = array();
+                if (!$entry = ldap_first_entry($this->link, $search)) {
+                    return $promises;
                 }
-                elseif ($attributes = ldap_get_attributes($this->link, $entry)) {
-                    $attributes = $this->normalizeAttributes($attributes, $class);
-                    $promises[] = $this->hydrateObject($attributes, $oid, $instance);
-                }
-            } while ($entry = ldap_next_entry($this->link, $entry));
-            return When::all($promises);
-        });
+                do {
+                    $oid = ldap_get_dn($this->link, $entry);
+                    if ($object = $this->hydrationMap->objectExists($oid)) {
+                        $promises[$oid] = When::resolve($object);
+                    }
+                    elseif ($attributes = ldap_get_attributes($this->link, $entry)) {
+                        $attributes = $this->normalizeAttributes($attributes, $class);
+                        $promises[$oid] = $this->hydrateObject($attributes, $class);
+                    }
+                } while ($entry = ldap_next_entry($this->link, $entry));
+                return When::all($promises);
+            })->then(function ($objects) use ($cacheKey) {
+                return Cache::instance()->store($cacheKey, $objects);
+            });
+        })->then(array($this, 'buildCollection'));
     }
     
     public function purge($class, array $search = array(), array $options = array())

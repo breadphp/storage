@@ -11,7 +11,7 @@ class Map extends SplObjectStorage
     public function getInstance($object)
     {
         if (!$this->offsetExists($object)) {
-            $this->attach($object, new Instance($object, Instance::STATE_NEW));
+            return new Instance($object, null, Instance::STATE_NEW);
         }
         return $this->offsetGet($object);
     }
