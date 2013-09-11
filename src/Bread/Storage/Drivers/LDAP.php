@@ -92,7 +92,6 @@ class LDAP extends Driver implements DriverInterface
     protected $link;
     protected $base;
     protected $filter;
-    protected $hydrationMap;
     
     public function __construct($uri, array $options = array())
     {
@@ -195,7 +194,7 @@ class LDAP extends Driver implements DriverInterface
     public function fetch($class, array $search = array(), array $options = array())
     {
         return $this->fetchFromCache($class, $search, $options)->then(null, function($cacheKey) use ($class, $search, $options) {
-            return $this->applyOptions($instance, $search, $options)->then(function($search) use ($class) {
+            return $this->applyOptions($class, $search, $options)->then(function($search) use ($class) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return $promises;
@@ -220,10 +219,10 @@ class LDAP extends Driver implements DriverInterface
     public function purge($class, array $search = array(), array $options = array())
     {}
     
-    protected function applyOptions($instance, array $search = array(), array $options = array())
+    protected function applyOptions($class, array $search = array(), array $options = array())
     {
-        $class = $instance->getClass();
-        return $this->denormalizeSearch($class, array($this->filter, $search))->then(function($filter) use ($instance, $options) {
+        return $this->denormalizeSearch($class, array($this->filter, $search))->then(function($filter) use ($class, $options) {
+            $instance = new Instance($class);
             $attributes = $instance->getPropertyNames();
             $attrsonly = static::ATTRSONLY;
             $sizelimit = isset($options['limit']) ? $options['limit'] : static::SIZELIMIT;
@@ -277,6 +276,8 @@ class LDAP extends Driver implements DriverInterface
         }
         $type = ConfigurationManager::get($class, "properties.$name.type");
         switch ($type) {
+            case 'binary':
+                return base64_encode($value);
             case 'DateTime':
                 return When::resolve(DateTime::createFromFormat(self::DATETIME_FORMAT, $value));
             default:
@@ -433,7 +434,10 @@ class LDAP extends Driver implements DriverInterface
               throw new UnsupportedLogic(__CLASS__, $logic);
               
         }
-        $filter = "{$logic}(" . implode(')(', $conditions) . ")";
+        if (!$conditions) {
+            return null;
+        }
+        $filter = "{$logic}(" . implode(')(', array_filter($conditions)) . ")";
         return $negate ? "!($filter)" : $filter;
     }
     
