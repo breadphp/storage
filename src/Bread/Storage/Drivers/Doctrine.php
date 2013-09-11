@@ -306,7 +306,6 @@ class Doctrine extends Driver implements DriverInterface
                 foreach ($result->fetchAll() as $row) {
                     $oid = $row[self::OBJECTID_FIELD_NAME];
                     if ($object = $this->hydrationMap->objectExists($oid)) {
-                        var_dump("NOT hydrated $class $oid");
                         $promises[$oid] = When::resolve($object);
                     } else {
                         $propertiesQueryBuilder = $this->link->createQueryBuilder();
@@ -322,7 +321,6 @@ class Doctrine extends Driver implements DriverInterface
                                 ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
                                 ->execute()->fetchAll(\PDO::FETCH_COLUMN);
                         }
-                        var_dump("Hydrated $class $oid");
                         $promises[$oid] = $this->hydrateObject($values, $class);
                     }
                 }
