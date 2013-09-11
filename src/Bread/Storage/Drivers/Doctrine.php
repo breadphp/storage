@@ -136,7 +136,7 @@ class Doctrine extends Driver implements DriverInterface
         $class = $instance->getClass();
         $this->link->beginTransaction();
         return $this->denormalize($instance->getModifiedProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
-            $tables = $this->tablesFor($instance);
+            $tables = $this->tablesFor($class);
             foreach ($tables as $tableName) {
                 list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $tableName) + array(null, null);
                 $columns = $this->columns($tableName);
@@ -262,6 +262,7 @@ class Doctrine extends Driver implements DriverInterface
     public function delete($object)
     {
       $instance = $this->hydrationMap->getInstance($object);
+      $class = get_class($object);
       switch ($instance->getState()) {
         case Instance::STATE_NEW:
             $instance->setState(Instance::STATE_DELETED);
@@ -270,10 +271,10 @@ class Doctrine extends Driver implements DriverInterface
             break;
         case Instance::STATE_MANAGED:
             $oid = $instance->getObjectId();
-            $tableNames = $this->tablesFor($instance);
+            $tableNames = $this->tablesFor($class);
             $this->link->delete(array_shift($tableNames), array(self::OBJECTID_FIELD_NAME => $oid));
             $instance->setState(Instance::STATE_DELETED);
-            $this->invalidateCacheFor($instance->getClass());
+            $this->invalidateCacheFor($class);
             break;
       }
       return When::resolve($object);
