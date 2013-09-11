@@ -17,6 +17,7 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\Common\Cache\ArrayCache;
 use Bread\Caching\Cache;
+use ReflectionClass;
 
 class Doctrine extends Driver implements DriverInterface
 {
