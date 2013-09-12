@@ -16,6 +16,7 @@ use Bread\Storage\Exceptions\UnsupportedOption;
 use Bread\Storage\Exceptions\UnsupportedLogic;
 use Bread\Storage\Exceptions\UnsupportedCondition;
 use Bread\Storage\Collection;
+use ReflectionClass;
 
 class LDAP extends Driver implements DriverInterface
 {
@@ -126,7 +127,7 @@ class LDAP extends Driver implements DriverInterface
         $class = $instance->getClass();
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
-                $oid = $this->generateDN($class);
+                $oid = $this->generateDN($object);
                 $instance->setObjectId($oid);
                 break;
             case Instance::STATE_MANAGED:
@@ -230,8 +231,11 @@ class LDAP extends Driver implements DriverInterface
     protected function applyOptions($class, array $search = array(), array $options = array())
     {
         return $this->denormalizeSearch($class, array($this->filter, $search))->then(function($filter) use ($class, $options) {
-            $instance = new Instance($class);
-            $attributes = $instance->getPropertyNames();
+            $reflector = new ReflectionClass($class);
+            $attributes = array();
+            foreach ($reflector->getProperties() as $property) {
+                $attributes[] = $property->name;
+            }
             $attrsonly = static::ATTRSONLY;
             $sizelimit = isset($options['limit']) ? $options['limit'] : static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
@@ -457,6 +461,7 @@ class LDAP extends Driver implements DriverInterface
     
     protected function generateDN($object)
     {
+        $class = get_class($object);
         if (!$rdn = Configuration::get($class, 'storage.options.rdn')) {
             throw new Exception("Missing 'storage.options.rdn' option");
         }
