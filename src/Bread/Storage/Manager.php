@@ -23,10 +23,10 @@ class Manager
 
     protected static $drivers = array();
     
-    public static function register($driver, $class)
+    public static function register($driver, $class, $options = array())
     {
         if (is_string($driver)) {
-            $driver = static::factory($driver);
+            $driver = static::factory($driver, $options);
         }
         if (!isset(static::$drivers[$class])) {
             static::$drivers[$class] = array();
@@ -41,14 +41,14 @@ class Manager
         foreach ($classes as $c) {
             if (isset(static::$drivers[$c])) {
                 return static::$drivers[$c];
-            } elseif ($url = Configuration::get($c, "storage.url")) {
-                return static::register($url, $c);
+            } elseif ($url = Configuration::get($c, 'storage.url')) {
+                return static::register($url, $c, (array) Configuration::get($c, 'storage.options'));
             }
         }
         throw new Exceptions\DriverNotRegistered($class);
     }
 
-    public static function factory($url)
+    public static function factory($url, $options = array())
     {
         $scheme = parse_url($url, PHP_URL_SCHEME);
         if (!$Driver = Configuration::get(__CLASS__, "drivers.$scheme")) {
@@ -57,7 +57,7 @@ class Manager
         if (!is_subclass_of($Driver, 'Bread\Storage\Interfaces\Driver')) {
             throw new Exception("{$Driver} isn't a valid driver.");
         }
-        return new $Driver($url);
+        return new $Driver($url, $options);
     }
 }
 

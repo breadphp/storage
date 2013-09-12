@@ -16,8 +16,8 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\Common\Cache\ArrayCache;
-use Bread\Caching\Cache;
 use ReflectionClass;
+use Doctrine\DBAL\Configuration;
 
 class Doctrine extends Driver implements DriverInterface
 {
@@ -54,8 +54,18 @@ class Doctrine extends Driver implements DriverInterface
         'Bread\Types\EmailAddress' => Type::STRING
     );
     
+    /*
+     * $options = array(
+     *     'cache' => true,
+     *     'debug' => false
+     * );
+     */
     public function __construct($uri, array $options = array())
     {
+        $options = array_merge(array(
+            'cache' => true,
+            'debug' => false
+        ), $options);
         $scheme = parse_url($uri, PHP_URL_SCHEME);
         switch ($scheme) {
             case 'sqlite':
@@ -110,9 +120,10 @@ class Doctrine extends Driver implements DriverInterface
                 throw new Exception(sprintf('Scheme %s not supported by %s driver', $scheme, __CLASS__));
         }
         $this->link = DriverManager::getConnection($params);
-        if (isset($options['debug']) && $options['debug']) {
+        if ($options['debug']) {
             $this->link->getConfiguration()->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
         }
+        $this->useCache = $options['debug'];
         $cache = new ArrayCache();
         $config = $this->link->getConfiguration();
         $config->setResultCacheImpl($cache);
@@ -328,7 +339,7 @@ class Doctrine extends Driver implements DriverInterface
                 }
                 return When::all($promises);
             })->then(function ($objects) use ($cacheKey) {
-                return Cache::instance()->store($cacheKey, $objects);
+                return $this->storeToCache($cacheKey, $objects);
             });
         })->then(array($this, 'buildCollection'));
     }
@@ -694,6 +705,7 @@ class Doctrine extends Driver implements DriverInterface
             }
             if ($keys = ConfigurationManager::get($class, "keys")) {
                 $table->addUniqueIndex($keys);
+                // TODO Verify if necessary, if not delete
                 foreach ($keys as $key) {
                     switch (ConfigurationManager::get($class, "properties.$key.strategy")) {
                       case 'autoincrement':

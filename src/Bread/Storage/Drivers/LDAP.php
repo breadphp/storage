@@ -10,13 +10,12 @@ use Bread\Storage\Reference;
 use Bread\Storage\Manager;
 use Bread\Promises\When;
 use Bread\Promises\Interfaces\Promise;
-use Bread\Configuration\Manager as ConfigurationManager;
+use Bread\Configuration\Manager as Configuration;
 use Exception;
 use Bread\Storage\Exceptions\UnsupportedOption;
 use Bread\Storage\Exceptions\UnsupportedLogic;
 use Bread\Storage\Exceptions\UnsupportedCondition;
 use Bread\Storage\Collection;
-use Bread\Caching\Cache;
 
 class LDAP extends Driver implements DriverInterface
 {
@@ -100,6 +99,10 @@ class LDAP extends Driver implements DriverInterface
           'port' => self::DEFAULT_PORT,
           'query' => self::FILTER_ALL
         ), parse_url($uri));
+        $options = array_merge(array(
+            'cache' => true,
+            'debug' => false
+        ), $options);
         if (!$this->link = ldap_connect($params['host'], $params['port'])) {
             throw new Exception("Cannot connect to LDAP server {$params['host']}");
         }
@@ -110,6 +113,7 @@ class LDAP extends Driver implements DriverInterface
         $this->base = ltrim($params['path'], '/');
         parse_str($params['query'], $this->filter);
         $this->hydrationMap = new Map();
+        $this->useCache = $options['cache'];
     }
     
     public function __destruct() {
@@ -119,9 +123,10 @@ class LDAP extends Driver implements DriverInterface
     public function store($object)
     {
         $instance = $this->hydrationMap->getInstance($object);
+        $class = $instance->getClass();
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
-                $oid = $this->generateDN($instance);
+                $oid = $this->generateDN($class);
                 $instance->setObjectId($oid);
                 break;
             case Instance::STATE_MANAGED:
@@ -130,10 +135,13 @@ class LDAP extends Driver implements DriverInterface
             default:
                 throw new Exception('Object instance cannot be stored');
         }
-        $class = $instance->getClass();
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 return $this->denormalize($instance->getProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
+                    if (!$objectClass = Configuration::get($class, 'storage.options.objectClass')) {
+                        throw new Exception("Missing 'storage.options.objectClass' option");
+                    }
+                    $properties['objectClass'] = $objectClass;
                     if (!ldap_add($this->link, $oid, array_filter($properties))) {
                         throw new Exception(ldap_error($this->link));
                     }
@@ -211,7 +219,7 @@ class LDAP extends Driver implements DriverInterface
                 } while ($entry = ldap_next_entry($this->link, $entry));
                 return When::all($promises);
             })->then(function ($objects) use ($cacheKey) {
-                return Cache::instance()->store($cacheKey, $objects);
+                return $this->storeToCache($cacheKey, $objects);
             });
         })->then(array($this, 'buildCollection'));
     }
@@ -253,7 +261,7 @@ class LDAP extends Driver implements DriverInterface
                 continue;
             }
             unset($array['count']);
-            if (ConfigurationManager::get($class, "properties.$property.multiple")) {
+            if (Configuration::get($class, "properties.$property.multiple")) {
                 $normalizedAttributes[$property] = $array;
             } else {
                 $normalizedAttributes[$property] = array_shift($array);
@@ -274,7 +282,7 @@ class LDAP extends Driver implements DriverInterface
             }
             return When::all($normalizedValues);
         }
-        $type = ConfigurationManager::get($class, "properties.$name.type");
+        $type = Configuration::get($class, "properties.$name.type");
         switch ($type) {
             case 'binary':
                 return base64_encode($value);
@@ -303,7 +311,7 @@ class LDAP extends Driver implements DriverInterface
         } elseif (Reference::is($value)) {
             return When::resolve((string) $value);
         } elseif (is_object($value)) {
-            $type = ConfigurationManager::get($class, "properties.$field.type");
+            $type = Configuration::get($class, "properties.$field.type");
             switch ($type) {
               case 'DateTime':
                   return When::resolve($value->format(self::DATETIME_FORMAT));
@@ -445,5 +453,13 @@ class LDAP extends Driver implements DriverInterface
     {
         $condition = $property . $operator . $value;
         return $negate ? "!($condition)" : $condition;
+    }
+    
+    protected function generateDN($object)
+    {
+        if (!$rdn = Configuration::get($class, 'storage.options.rdn')) {
+            throw new Exception("Missing 'storage.options.rdn' option");
+        }
+        return "{$rdn}={$object->$rdn},{$this->base}";
     }
 }
