@@ -187,7 +187,7 @@ class LDAP extends Driver implements DriverInterface
     
     public function count($class, array $search = array(), array $options = array())
     {
-        return $this->search($class, $search, $options)->then(function ($search) {
+        return $this->applyOptions($class, $search, $options)->then(function ($search) {
             return ldap_count_entries($this->link, $search);
         });
     }
@@ -214,8 +214,9 @@ class LDAP extends Driver implements DriverInterface
                         $promises[$oid] = When::resolve($object);
                     }
                     elseif ($attributes = ldap_get_attributes($this->link, $entry)) {
-                        $attributes = $this->normalizeAttributes($attributes, $class);
-                        $promises[$oid] = $this->hydrateObject($attributes, $class);
+                        if ($attributes = $this->normalizeAttributes($attributes, $class)) {
+                            $promises[$oid] = $this->hydrateObject($attributes, $class);
+                        }
                     }
                 } while ($entry = ldap_next_entry($this->link, $entry));
                 return When::all($promises);
