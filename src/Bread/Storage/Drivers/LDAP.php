@@ -17,11 +17,14 @@ use Bread\Storage\Exceptions\UnsupportedLogic;
 use Bread\Storage\Exceptions\UnsupportedCondition;
 use Bread\Storage\Collection;
 use ReflectionClass;
+use DateTime;
+use DateInterval;
+use Bread\Storage\Drivers\LDAP\AttributeType;
 
 class LDAP extends Driver implements DriverInterface
 {
     const DEFAULT_PORT = 389;
-    const DATETIME_FORMAT = 'YmdHms.0Z';
+    const DATETIME_FORMAT = 'U';
     const FILTER_ALL = 'objectClass=*';
     const ATTRSONLY = 0;
     const SIZELIMIT = 0;
@@ -92,6 +95,7 @@ class LDAP extends Driver implements DriverInterface
     protected $link;
     protected $base;
     protected $filter;
+    protected $pla;
     
     public function __construct($uri, array $options = array())
     {
@@ -115,6 +119,7 @@ class LDAP extends Driver implements DriverInterface
         parse_str($params['query'], $this->filter);
         $this->hydrationMap = new Map();
         $this->useCache = $options['cache'];
+        $this->pla = new LDAP\PLA($this->link);
     }
     
     public function __destruct() {
@@ -127,6 +132,13 @@ class LDAP extends Driver implements DriverInterface
         $class = $instance->getClass();
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
+                foreach (Configuration::get($class, 'keys') as $keyProperty) {
+                    switch (Configuration::get($class, "properties.$keyProperty.strategy")) {
+                      case 'autoincrement':
+                          $instance->setProperty($object, $keyProperty, (int) $this->getSequence());
+                          break;
+                    }
+                }
                 $oid = $this->generateDN($object);
                 $instance->setObjectId($oid);
                 break;
@@ -229,9 +241,24 @@ class LDAP extends Driver implements DriverInterface
     public function purge($class, array $search = array(), array $options = array())
     {}
     
+    protected function read($class, $dn)
+    {
+        if ($object = $this->hydrationMap->objectExists($dn)) {
+            return When::resolve($object);
+        }
+        $search = ldap_read($this->link, $dn, self::FILTER_ALL);
+        $entry = ldap_first_entry($this->link, $search);
+        $attributes = ldap_get_attributes($this->link, $entry);
+        $properties = $this->normalizeAttributes($attributes, $class);
+        return $this->hydrateObject($properties, $class);
+    }
+    
     protected function applyOptions($class, array $search = array(), array $options = array())
     {
-        return $this->denormalizeSearch($class, array($this->filter, $search))->then(function($filter) use ($class, $options) {
+        $filter = array_merge($this->filter, array(
+            'objectClass' => array('$all' => Configuration::get($class, 'storage.options.objectClass')
+        )));
+        return $this->denormalizeSearch($class, array($filter, $search))->then(function($filter) use ($class, $options) {
             $reflector = new ReflectionClass($class);
             $attributes = array();
             foreach ($reflector->getProperties() as $property) {
@@ -280,20 +307,39 @@ class LDAP extends Driver implements DriverInterface
         if (Reference::is($value)) {
             return Reference::fetch($value);
         }
-        if (is_array($value)) {
-            $normalizedValues = array();
-            foreach ($value as $v) {
-                $normalizedValues[] = $this->normalizeValue($name, $v, $class);
-            }
-            return When::all($normalizedValues);
-        }
         $type = Configuration::get($class, "properties.$name.type");
         switch ($type) {
+            case 'integer':
+                return (int) $value;
+            case 'float':
+                return (float) $value;
             case 'binary':
                 return base64_encode($value);
             case 'DateTime':
-                return When::resolve(DateTime::createFromFormat(self::DATETIME_FORMAT, $value));
+                $attributeType = $this->pla->getSchemaAttribute($name);
+                switch ($attributeType->getType()) {
+                  case AttributeType::TYPE_GENERALIZED_TIME:
+                      $dateTimeFormat = AttributeType::FORMAT_GENERALIZED_TIME;
+                      break;
+                  default:
+                      $dateTimeFormat = self::DATETIME_FORMAT;
+                }
+                return When::resolve(DateTime::createFromFormat($dateTimeFormat, $value));
             default:
+                $attributeType = $this->pla->getSchemaAttribute($name);
+                switch ($attributeType->getType()) {
+                  case AttributeType::TYPE_DN:
+                      // TODO Enforce check on LDAP driver/same instance?
+                      // FIXME $type could be abstract, how to infer class from DN?
+                      return $this->read($type, $value);
+                }
+                if (is_array($value)) {
+                    $normalizedValues = array();
+                    foreach ($value as $v) {
+                        $normalizedValues[] = $this->normalizeValue($name, $v, $class);
+                    }
+                    return When::all($normalizedValues);
+                }
                 return When::resolve($value);
         }
     }
@@ -317,12 +363,18 @@ class LDAP extends Driver implements DriverInterface
             return When::resolve((string) $value);
         } elseif (is_object($value)) {
             $type = Configuration::get($class, "properties.$field.type");
-            switch ($type) {
-              case 'DateTime':
-                  return When::resolve($value->format(self::DATETIME_FORMAT));
-              default:
-                return Manager::driver(get_class($value))->store($value)->then(function($object) {
-                    return (string) new Reference($object);
+            if ($value instanceof DateTime) {
+                return When::resolve($value->format(self::DATETIME_FORMAT));
+            } else {
+                return Manager::driver(get_class($value))->store($value)->then(function($object) use ($field) {
+                    $attributeType = $this->pla->getSchemaAttribute($field);
+                    switch ($attributeType->getType()) {
+                      case AttributeType::TYPE_DN:
+                          // TODO Enforce check on LDAP driver/same instance?
+                          return $this->generateDN($object);
+                      default:
+                          return (string) new Reference($object);
+                    }
                 });
             }
         } elseif (is_array($value)) {
@@ -463,9 +515,57 @@ class LDAP extends Driver implements DriverInterface
     protected function generateDN($object)
     {
         $class = get_class($object);
-        if (!$rdn = Configuration::get($class, 'storage.options.rdn')) {
-            throw new Exception("Missing 'storage.options.rdn' option");
+        if (!$keys = Configuration::get($class, 'keys')) {
+            throw new Exception("Option 'keys' mandatory to store $class with " . __CLASS__);
         }
-        return "{$rdn}={$object->$rdn},{$this->base}";
+        $dn = array();
+        foreach ($keys as $rdn) {
+            $dn[] = "{$rdn}={$object->$rdn}"; 
+        }
+        $dn[] = $this->base;
+        return implode(',', $dn);
+    }
+    
+    /*
+     * PHP LDAP driver does not support atomic operations,
+     * therefore inconsistencies may arise using autoincrement values.
+     * 
+     * TODO Workaround using shell's ldapmodify delete/add operations
+     */
+    protected function getSequence()
+    {
+        $dn = 'cn=autoincrement,' . $this->base;
+        $search = ldap_search($this->link, $dn, '(objectClass=breadSequence)');
+        $entry = ldap_first_entry($this->link, $search);
+        $sequence = ldap_get_attributes($this->link, $entry);
+        $sequenceNumber = (int) $sequence['breadSequenceNumber'][0];
+        ldap_modify($this->link, $dn, array(
+            'breadSequenceNumber' => array(
+                $sequenceNumber + 1
+            )
+        ));
+        return $sequenceNumber;
+    }
+    
+    protected function littleEndian($hex) {
+        $result = '';
+        for ($x = strlen($hex) - 2; $x >= 0; $x = $x - 2) {
+            $result .= substr($hex, $x, 2);
+        }
+        return $result;
+    }
+    
+    protected function binSIDtoText($binsid, $pop = true) {
+        $hex_sid = bin2hex($binsid);
+        $rev = hexdec(substr($hex_sid, 0, 2)); // Get revision-part of SID
+        $subcount = hexdec(substr($hex_sid, 2, 2)); // Get count of sub-auth entries
+        $auth = hexdec(substr($hex_sid, 4, 12)); // SECURITY_NT_AUTHORITY
+        $result = "$rev-$auth";
+        for ($x = 0; $x < $subcount; $x++) {
+            $subauth[$x] = hexdec($this->littleEndian(substr($hex_sid, 16 + ($x * 8), 8))); // get all SECURITY_NT_AUTHORITY
+            $result .= sprintf('-%s', $subauth[$x]);
+        }
+        $parts = explode('-', $result);
+        return $pop ? array_pop($parts) : $result;
     }
 }

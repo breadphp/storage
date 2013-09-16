@@ -40,6 +40,9 @@ abstract class Driver
         return When::all($promises, function($properties) use ($class, $reflector) {
             $object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
+                if (!$reflector->hasProperty($name)) {
+                    continue;
+                }
                 $property = $reflector->getProperty($name);
                 $property->setAccessible(true);
                 $property->setValue($object, $value);

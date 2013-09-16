@@ -22,16 +22,16 @@ class Manager
 {
 
     protected static $drivers = array();
+    protected static $mapping = array();
     
     public static function register($driver, $class, $options = array())
     {
         if (is_string($driver)) {
-            $driver = static::factory($driver, $options);
+            if (!isset(static::$drivers[$driver])) {
+                static::$drivers[$driver] = static::factory($driver, $options);
+            }
         }
-        if (!isset(static::$drivers[$class])) {
-            static::$drivers[$class] = array();
-        }
-        return static::$drivers[$class] = $driver;
+        return static::$mapping[$class] = static::$drivers[$driver];
     }
 
     public static function driver($class)
@@ -39,8 +39,8 @@ class Manager
         $classes = class_parents($class);
         array_unshift($classes, $class);
         foreach ($classes as $c) {
-            if (isset(static::$drivers[$c])) {
-                return static::$drivers[$c];
+            if (isset(static::$mapping[$c])) {
+                return static::$mapping[$c];
             } elseif ($url = Configuration::get($c, 'storage.url')) {
                 return static::register($url, $c, (array) Configuration::get($c, 'storage.options'));
             }
