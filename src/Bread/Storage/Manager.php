@@ -30,8 +30,11 @@ class Manager
             if (!isset(static::$drivers[$driver])) {
                 static::$drivers[$driver] = static::factory($driver, $options);
             }
+            static::$mapping[$class] = static::$drivers[$driver];
+        } else {
+            static::$mapping[$class] = $driver;
         }
-        return static::$mapping[$class] = static::$drivers[$driver];
+        return static::$mapping[$class];
     }
 
     public static function driver($class)
