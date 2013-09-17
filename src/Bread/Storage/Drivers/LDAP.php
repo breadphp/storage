@@ -267,7 +267,7 @@ class LDAP extends Driver implements DriverInterface
             $attrsonly = static::ATTRSONLY;
             $sizelimit = isset($options['limit']) ? $options['limit'] : static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
-            $search = ldap_search($this->link, $this->base, "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
+            $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
             foreach ($options as $option => $value) {
                 switch ($option) {
                   case 'sort':
@@ -366,7 +366,8 @@ class LDAP extends Driver implements DriverInterface
             if ($value instanceof DateTime) {
                 return When::resolve($value->format(self::DATETIME_FORMAT));
             } else {
-                return Manager::driver(get_class($value))->store($value)->then(function($object) use ($field) {
+                $driver = Manager::driver(get_class($value));
+                return $driver->store($value)->then(function($object) use ($driver, $field) {
                     $attributeType = $this->pla->getSchemaAttribute($field);
                     switch ($attributeType->getType()) {
                       case AttributeType::TYPE_DN:
@@ -512,6 +513,15 @@ class LDAP extends Driver implements DriverInterface
         return $negate ? "!($condition)" : $condition;
     }
     
+    protected function getBase($class)
+    {
+        $base = array(
+            Configuration::get($class, 'storage.options.base'),
+            $this->base
+        );
+        return implode(',', $base);
+    }
+    
     protected function generateDN($object)
     {
         $class = get_class($object);
@@ -522,7 +532,7 @@ class LDAP extends Driver implements DriverInterface
         foreach ($keys as $rdn) {
             $dn[] = "{$rdn}={$object->$rdn}"; 
         }
-        $dn[] = $this->base;
+        $dn[] = $this->getBase($class);
         return implode(',', $dn);
     }
     
