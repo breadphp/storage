@@ -132,11 +132,19 @@ class LDAP extends Driver implements DriverInterface
         $class = $instance->getClass();
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
-                foreach (Configuration::get($class, 'keys') as $keyProperty) {
-                    switch (Configuration::get($class, "properties.$keyProperty.strategy")) {
-                      case 'autoincrement':
-                          $instance->setProperty($object, $keyProperty, (int) $this->getSequence());
-                          break;
+                foreach ((array) Configuration::get($class, 'keys') as $property) {
+                    foreach ((array) Configuration::get($class, "properties.$property.strategy") as $strategy => $callback) {
+                        switch ($strategy) {
+                            case 'autoincrement':
+                                if ($callback && is_null($object->$property)) {
+                                    $autoincrement = (int) $this->autoincrement($class);
+                                    if (is_callable($callback)) {
+                                        $value = call_user_func($callback, $autoincrement);
+                                    }
+                                }
+                                break;
+                        }
+                        $instance->setProperty($object, $property, $value);
                     }
                 }
                 $oid = $this->generateDN($object);
@@ -542,9 +550,9 @@ class LDAP extends Driver implements DriverInterface
      * 
      * TODO Workaround using shell's ldapmodify delete/add operations
      */
-    protected function getSequence()
+    protected function autoincrement($class)
     {
-        $dn = 'cn=autoincrement,' . $this->base;
+        $dn = $this->getBase($class);
         $search = ldap_search($this->link, $dn, '(objectClass=breadSequence)');
         $entry = ldap_first_entry($this->link, $search);
         $sequence = ldap_get_attributes($this->link, $entry);
