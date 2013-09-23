@@ -2,6 +2,7 @@
 namespace Bread\Storage\Drivers;
 
 use Bread\Storage\Driver;
+use Bread\Storage\Drivers\Doctrine\Types\BreadDateTime;
 use Bread\Storage\Interfaces\Driver as DriverInterface;
 use Bread\Storage\Hydration\Instance;
 use Bread\Storage\Hydration\Map;
@@ -48,12 +49,8 @@ class Doctrine extends Driver implements DriverInterface
         'resource' => Type::BLOB,
         'DateTime' => Type::DATETIME,
         'DateInterval' => Type::INTEGER,
-        'Bread\Types\Date' => Type::DATE,
-        'Bread\Types\Time' => Type::TIME,
-        'Bread\Types\DateTime' => Type::DATETIME,
-        'Bread\Types\DateInterval' => Type::INTEGER,
-        'Bread\Types\Text' => Type::STRING,
-        'Bread\Types\EmailAddress' => Type::STRING
+        'Bread\Types\DateTime' => BreadDateTime::NAME,
+        'Bread\Types\DateInterval' => Type::INTEGER
     );
     
     public function __construct($uri, array $options = array())
@@ -125,6 +122,7 @@ class Doctrine extends Driver implements DriverInterface
         $config->setResultCacheImpl($cache);
         $this->schemaManager = $this->link->getSchemaManager();
         $this->hydrationMap = new Map();
+        $this->registerTypes();
     }
 
     public function store($object)
@@ -403,7 +401,7 @@ class Doctrine extends Driver implements DriverInterface
           default:
               if (isset(self::$typesMap[$type])) {
                   $doctrineType = self::$typesMap[$type];
-                  // TODO workaround to make BIGINTs convert to int instead of string
+                  // FIXME workaround to make BIGINTs convert to int instead of string
                   if ($doctrineType === Type::BIGINT) {
                       $doctrineType = Type::INTEGER;
                   }
@@ -430,13 +428,18 @@ class Doctrine extends Driver implements DriverInterface
             });
         } elseif (Reference::is($value)) {
             return When::resolve((string) $value);
+        } elseif (is_array($value) || $value instanceof Collection) {
+            $denormalizedValuePromises = array();
+            foreach ($value as $k => $v) {
+                $denormalizedValuePromises[$k] = $this->denormalizeValue($v, $field, $class);
+            }
+            return When::all($denormalizedValuePromises);
         } elseif (is_object($value)) {
             $type = Configuration::get($class, "properties.$field.type");
             if (isset(self::$typesMap[$type])) {
                 $doctrineType = self::$typesMap[$type];
                 return When::resolve($this->link->convertToDatabaseValue($value, $doctrineType));
-            }
-            else {
+            } else {
                 if ($value instanceof DateInterval) {
                     $denormalizedValue = (int) Types\DateInterval::calculateSeconds($value);
                     return When::resolve($denormalizedValue);
@@ -446,12 +449,6 @@ class Doctrine extends Driver implements DriverInterface
                     });
                 }
             }
-        } elseif (is_array($value)) {
-            $denormalizedValuePromises = array();
-            foreach ($value as $k => $v) {
-                $denormalizedValuePromises[$k] = $this->denormalizeValue($v, $field, $class);
-            }
-            return When::all($denormalizedValuePromises);
         } else {
             return When::resolve($value);
         }
@@ -771,5 +768,12 @@ class Doctrine extends Driver implements DriverInterface
     protected function generateObjectId()
     {
         return uniqid();
+    }
+    
+    protected function registerTypes()
+    {
+        if (!Type::hasType(BreadDateTime::NAME)) {
+            Type::addType(BreadDateTime::NAME, BreadDateTime::class);
+        }
     }
 }
