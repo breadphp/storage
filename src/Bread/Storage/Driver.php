@@ -35,7 +35,13 @@ abstract class Driver
         $reflector = new ReflectionClass($class);
         $promises = array();
         foreach ($properties as $name => $value) {
-            $promises[$name] = $this->normalizeValue($name, $value, $class);
+            if (Configuration::get($class, "properties.$name.multiple")) {
+                $promises[$name] = When::all(array_map(function ($value) use ($name, $class) {
+                    return $this->normalizeValue($name, $value, $class);
+                }, $value));
+            } else {
+                $promises[$name] = $this->normalizeValue($name, $value, $class);
+            }
         }
         return When::all($promises, function($properties) use ($class, $reflector) {
             $object = $reflector->newInstanceWithoutConstructor();
