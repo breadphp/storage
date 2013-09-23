@@ -130,6 +130,9 @@ class LDAP extends Driver implements DriverInterface
     {
         $instance = $this->hydrationMap->getInstance($object);
         $class = $instance->getClass();
+        if (Configuration::get($class, 'storage.options.readonly')) {
+            return When::resolve($object);
+        }
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 foreach ((array) Configuration::get($class, 'keys') as $property) {
