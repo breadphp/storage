@@ -16,14 +16,16 @@ use Exception;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Types\Type;
-use Doctrine\Common\Cache\ArrayCache;
 use ReflectionClass;
 use Bread\Types;
 use DateTime;
 use DateInterval;
+use Doctrine\Common\Cache\FilesystemCache;
+use Doctrine\Common\Cache\ArrayCache;
 
 class Doctrine extends Driver implements DriverInterface
 {
+    const INDEX_TABLE = '_index';
     const OBJECTID_FIELD_NAME = '_id';
     const OBJECTID_FIELD_TYPE = 'guid';
     const MULTIPLE_PROPERTY_INDEX_FIELD_NAME = '_key';
@@ -36,6 +38,8 @@ class Doctrine extends Driver implements DriverInterface
     protected $link;
     
     protected $schemaManager;
+    
+    protected $cache;
     
     // TODO Move to configuration?
     protected static $typesMap = array(
@@ -113,24 +117,23 @@ class Doctrine extends Driver implements DriverInterface
                 throw new Exception(sprintf('Scheme %s not supported by %s driver', $scheme, __CLASS__));
         }
         $this->link = DriverManager::getConnection($params);
+        $config = $this->link->getConfiguration();
         if ($options['debug']) {
-            $this->link->getConfiguration()->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
+            $config->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
         }
         $this->useCache = $options['cache'];
-        $cache = new ArrayCache();
-        $config = $this->link->getConfiguration();
-        $config->setResultCacheImpl($cache);
         $this->schemaManager = $this->link->getSchemaManager();
         $this->hydrationMap = new Map();
         $this->registerTypes();
+        $this->cache = new ArrayCache(); //new FilesystemCache(sys_get_temp_dir());
     }
 
-    public function store($object)
+    public function store($object, $oid = null)
     {
         $instance = $this->hydrationMap->getInstance($object);
         switch ($instance->getState()) {
           case Instance::STATE_NEW:
-              $oid = $this->generateObjectId();
+              $oid = $oid ? : $this->generateObjectId();
               $instance->setObjectId($oid);
               break;
           case Instance::STATE_MANAGED:
@@ -176,10 +179,10 @@ class Doctrine extends Driver implements DriverInterface
                           $values[$objectIdFieldName] = $oid;
                           $this->link->insert($tableName, $values);
                           // TODO replace strategy with computed attributes outside storage
-                          foreach (Configuration::get($class, "keys") as $keyProperty) {
-                              switch (Configuration::get($class, "properties.$keyProperty.strategy")) {
+                          foreach (Configuration::get($class, "properties") as $property => $options) {
+                              switch (Configuration::get($class, "properties.$property.strategy")) {
                                 case 'autoincrement':
-                                    $instance->setProperty($object, $keyProperty, (int) $this->link->lastInsertId());
+                                    $instance->setProperty($object, $property, (int) $this->link->lastInsertId());
                                     break;
                               }
                           }
@@ -280,6 +283,7 @@ class Doctrine extends Driver implements DriverInterface
         case Instance::STATE_MANAGED:
             $oid = $instance->getObjectId();
             $tableNames = $this->tablesFor($class);
+            $this->deleteCascade($object);
             $this->link->delete(array_shift($tableNames), array($objectIdFieldName => $oid));
             $instance->setState(Instance::STATE_DELETED);
             $this->invalidateCacheFor($class);
@@ -305,39 +309,49 @@ class Doctrine extends Driver implements DriverInterface
     
     public function fetch($class, array $search = array(), array $options = array())
     {
-        return $this->fetchFromCache($class, $search, $options)->then(null, function($cacheKey) use ($class, $search, $options) {
+        return $this->fetchFromCache($class, $search, $options)->then(function ($objects) {
+            foreach ($objects as $oid => $object) {
+                $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
+            }
+            return $objects;
+        }, function($cacheKey) use ($class, $search, $options) {
             return $this->select($class, $search, $options)->then(function ($result) use ($class) {
                 $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
-                $tableNames = $this->tablesFor($class);
-                $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
-                $tableAlias = $this->link->quoteIdentifier('t');
-                $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
                 $promises = array();
                 foreach ($result->fetchAll() as $row) {
                     $oid = $row[$objectIdFieldName];
-                    if ($object = $this->hydrationMap->objectExists($oid)) {
-                        $promises[$oid] = When::resolve($object);
-                    } else {
-                        $propertiesQueryBuilder = $this->link->createQueryBuilder();
-                        $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
-                            ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
-                            ->execute()->fetch(\PDO::FETCH_ASSOC);
-                        foreach ($tableNames as $multiplePropertyTableName) {
-                            list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
-                            $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
-                            $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
-                            $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
-                                ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
-                                ->execute()->fetchAll(\PDO::FETCH_COLUMN);
-                        }
-                        $promises[$oid] = $this->hydrateObject($values, $class);
-                    }
+                    $promises[$oid] = $this->getObject($class, $oid);
                 }
                 return When::all($promises);
             })->then(function ($objects) use ($cacheKey) {
                 return $this->storeToCache($cacheKey, $objects);
             });
         })->then(array($this, 'buildCollection'));
+    }
+    
+    public function getObject($class, $oid)
+    {
+        $tableNames = $this->tablesFor($class);
+        $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+        $tableAlias = $this->link->quoteIdentifier('t');
+        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+        $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
+        if (!$object = $this->hydrationMap->objectExists($oid)) {
+            $propertiesQueryBuilder = $this->link->createQueryBuilder();
+            $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
+                ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
+                ->execute()->fetch(\PDO::FETCH_ASSOC);
+            foreach ($tableNames as $multiplePropertyTableName) {
+                list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
+                $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
+                $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
+                $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
+                    ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
+                    ->execute()->fetchAll(\PDO::FETCH_COLUMN);
+            }
+            $object = $this->hydrateObject($values, $class, $oid);
+        }
+        return ($object instanceof Promise) ? $object : When::resolve($object);
     }
 
     public function purge($class, array $search = array(), array $options = array())
@@ -424,7 +438,9 @@ class Doctrine extends Driver implements DriverInterface
     {
         if ($value instanceof Promise) {
             return $value->then(function($value) use ($field, $class) {
-                return $this->denormalizeValue($value, $field, $class);
+                return $this->denormalizeValue($value, $field, $class)->then(null, function() {
+                    return null;
+                });
             });
         } elseif (Reference::is($value)) {
             return When::resolve((string) $value);
@@ -659,12 +675,52 @@ class Doctrine extends Driver implements DriverInterface
         });
     }
     
+    protected function createIndexTable()
+    {
+        $schema = $this->schemaManager->createSchema();
+        $table = $schema->createTable(self::INDEX_TABLE);
+        $table->addColumn('class', Type::STRING);
+        $table->addColumn('table', Type::STRING);
+        $table->setPrimaryKey(array('class'));
+        $table->addUniqueIndex(array('table'));
+        return $this->schemaManager->createTable($table);
+    }
+    
+    protected function indexTable($class)
+    {
+        $split = explode('\\', $class);
+        $tableNameRoot = $tableName = array_pop($split);
+        $i = 1;
+        while ($this->schemaManager->tablesExist($tableName)) {
+            $tableName = $tableNameRoot . (string) ++$i;
+        }
+        $this->link->insert(self::INDEX_TABLE, array(
+            $this->link->quoteIdentifier('class') => $class,
+            $this->link->quoteIdentifier('table') => $tableName
+        ));
+        return $tableName;
+    }
+    
+    protected function indexedTable($class)
+    {
+        if (!$this->schemaManager->tablesExist(self::INDEX_TABLE)) {
+            $this->createIndexTable();
+        }
+        $queryBuilder = $this->link->createQueryBuilder();
+        $where = $queryBuilder->expr()->eq($this->link->quoteIdentifier('class'), $queryBuilder->createNamedParameter($class));
+        $queryBuilder->select($this->link->quoteIdentifier('table'))->from(self::INDEX_TABLE, 't')->where($where);
+        return $queryBuilder->execute()->fetchColumn(0);
+    }
+    
     protected function tablesFor($class)
     {
+        if ($this->cache->contains($class)) {
+            return $this->cache->fetch($class);
+        }
         if (!$tableName = Configuration::get($class, "storage.options.table")) {
-            // TODO _index table
-            $split = explode('\\', $class);
-            $tableName = array_pop($split);
+            if (!$tableName = $this->indexedTable($class)) {
+                $tableName = $this->indexTable($class);
+            }
         }
         $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
         $schema = $this->schemaManager->createSchema();
@@ -677,8 +733,10 @@ class Doctrine extends Driver implements DriverInterface
                 $columnName = $property->name;
                 $propertyType = Configuration::get($class, "properties.$columnName.type");
                 $isRequired = Configuration::get($class, "properties.$columnName.required");
+                $isUnique = Configuration::get($class, "properties.$columnName.unique");
                 $isMultiple = Configuration::get($class, "properties.$columnName.multiple");
                 $isTaggable = Configuration::get($class, "properties.$columnName.taggable");
+                $isIndexed = Configuration::get($class, "properties.$columnName.indexed");
                 $strategy = Configuration::get($class, "properties.$columnName.strategy");
                 $default = Configuration::get($class, "properties.$columnName.default");
                 $columnType = $this->mapColumnType($propertyType);
@@ -688,6 +746,11 @@ class Doctrine extends Driver implements DriverInterface
                     $multiplePropertyTable->addColumn($objectIdFieldName, self::OBJECTID_FIELD_TYPE);
                     $multiplePropertyTable->addColumn(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME, self::MULTIPLE_PROPERTY_INDEX_FIELD_TYPE);
                     $multiplePropertyTable->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
+                    if ($isUnique) {
+                        $multiplePropertyTable->addUniqueIndex(array($columnName));
+                    } elseif ($isIndexed) {
+                        $multiplePropertyTable->addIndex(array($columnName));
+                    }
                     $multiplePropertyTables[] = $multiplePropertyTable;
                 } elseif ($isTaggable) {
                     $taggablePropertyTableName = $this->getMultiplePropertyTableName($tableName, $columnName);
@@ -695,10 +758,20 @@ class Doctrine extends Driver implements DriverInterface
                     $taggablePropertyTable->addColumn($objectIdFieldName, self::OBJECTID_FIELD_TYPE);
                     $taggablePropertyTable->addColumn(self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME, self::TAGGABLE_PROPERTY_INDEX_FIELD_TYPE);
                     $taggablePropertyTable->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
+                    if ($isUnique) {
+                        $taggablePropertyTable->addUniqueIndex(array($columnName));
+                    } elseif ($isIndexed) {
+                        $taggablePropertyTable->addIndex(array($columnName));
+                    }
                     $taggablePropertyTables[] = $taggablePropertyTable;
                 }
                 else {
                     $column = $table->addColumn($columnName, $columnType)->setNotnull($isRequired)->setDefault($default);
+                    if ($isUnique) {
+                        $table->addUniqueIndex(array($columnName));
+                    } elseif ($isIndexed) {
+                        $table->addIndex(array($columnName));
+                    }
                     switch ($strategy) {
                       case 'autoincrement':
                           $column->setAutoincrement(true);
@@ -706,16 +779,8 @@ class Doctrine extends Driver implements DriverInterface
                     }
                 }
             }
-            if ($keys = Configuration::get($class, "keys")) {
-                $table->addUniqueIndex($keys);
-                // TODO Verify if necessary, if not delete
-                foreach ($keys as $key) {
-                    switch (Configuration::get($class, "properties.$key.strategy")) {
-                      case 'autoincrement':
-                          $table->getColumn($key)->setAutoincrement(true);
-                          break;
-                    }
-                }
+            if ($uniques = Configuration::get($class, "uniques")) {
+                $table->addUniqueIndex($uniques);
             }
             $table->addColumn($objectIdFieldName, self::OBJECTID_FIELD_TYPE);
             $table->setPrimaryKey(array($objectIdFieldName));
@@ -740,6 +805,7 @@ class Doctrine extends Driver implements DriverInterface
                 $tableNames[] = $currentTableName;
             }
         }
+        $this->cache->save($class, $tableNames);
         return $tableNames;
     }
     

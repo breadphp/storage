@@ -3,6 +3,7 @@
 namespace Bread\Storage\Hydration;
 
 use ReflectionClass;
+use Bread\Storage\Collection;
 
 class Instance
 {
@@ -21,11 +22,11 @@ class Instance
         if (is_object($objectOrClassName)) {
             $this->className = get_class($objectOrClassName);
             $this->reflector = new ReflectionClass($this->className);
-            $this->object = clone $objectOrClassName;
+            $this->setObject($objectOrClassName);
         } elseif (is_string($objectOrClassName)) {
             $this->className = $objectOrClassName;
             $this->reflector = new ReflectionClass($this->className);
-            $this->object = $this->reflector->newInstanceWithoutConstructor();
+            $this->setObject($this->reflector->newInstanceWithoutConstructor(), false);
         }
         $this->oid = $oid;
         $this->state = $state;
@@ -46,9 +47,14 @@ class Instance
         return $this->object;
     }
     
-    public function setObject($object)
+    public function setObject($object, $clone = true)
     {
-        $this->object = clone $object;
+        $this->object = $clone ? clone $object : $object;
+        $this->originalProperties = array_map(function ($value) {
+            if ($value instanceof Collection) {
+                return $value->getArrayCopy();
+            }
+        }, $this->getProperties($this->object));
     }
     
     public function getProperty($object, $name)
@@ -102,8 +108,12 @@ class Instance
         $modifiedProperties = array();
         foreach ($this->reflector->getProperties() as $property) {
             $property->setAccessible(true);
+            $previousValue = $property->getValue($this->object);
             $currentValue = $property->getValue($object);
-            if ($property->getValue($this->object) !== $currentValue) {
+            if ($currentValue instanceof Collection) {
+                $currentValue = $currentValue->getArrayCopy();
+            }
+            if ($previousValue !== $currentValue) {
                 $modifiedProperties[$property->name] = $currentValue;
             }
         }

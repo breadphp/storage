@@ -18,18 +18,20 @@ use Bread\Configuration\Manager as ConfigurationManager;
 use Bread\Promises\Interfaces\Promise;
 use JsonSerializable;
 use Exception;
+use ReflectionClass;
 
 class Reference implements JsonSerializable
 {
 
-    public $_class;
+    public $_ref;
 
-    public $_keys;
+    public $_id;
 
     public function __construct($object)
     {
-        $this->_class = get_class($object);
-        $this->_keys = $this->keys($object);
+        $class = get_class($object);
+        $this->_ref = $class;
+        $this->_id = Manager::driver($class)->getObjectId($object);
     }
 
     public function __toString()
@@ -41,34 +43,29 @@ class Reference implements JsonSerializable
         return $this;
     }
 
-    protected function keys($object)
+    public static function __set_state($array)
     {
-        $class = get_class($object);
-        if (!$configuredKeys = ConfigurationManager::get($class, 'keys')) {
-            throw new Exception(sprintf('No keys configured on class %s', $class));
-        }
-        $keys = array();
-        foreach ($configuredKeys as $keyProperty) {
-            if (is_object($object->$keyProperty)) {
-                $keys[$keyProperty] = new Reference($object->$keyProperty);
-            } else {
-                $keys[$keyProperty] = $object->$keyProperty;
+        $reflectionClass = new ReflectionClass(__CLASS__);
+        $reference = $reflectionClass->newInstanceWithoutConstructor();
+        foreach ($reflectionClass->getProperties() as $property) {
+            if (isset($array[$property->name])) {
+                $property->setValue($reference, $array[$property->name]);
             }
         }
-        return $keys;
+        return $reference;
     }
-
-    public static function is($reference)
+    
+    public static function is($reference, $class = null)
     {
         if ($reference instanceof Reference) {
-            return $reference;
-        } elseif (is_object($reference)) {
-            return false;
+            return $class ? $reference->_ref === $class : true;
         } elseif (is_string($reference)) {
             $reference = json_decode($reference, true);
         }
-        if (isset($reference['_class']) && isset($reference['_keys'])) {
-            return $reference;
+        if (is_array($reference)) {
+            if (isset($reference['_ref']) && isset($reference['_id'])) {
+                return $class ? $reference['_ref'] === $class : true;
+            }
         }
         return false;
     }
@@ -78,13 +75,10 @@ class Reference implements JsonSerializable
         if (!static::is($reference)) {
             throw new Exception("Not a valid reference");
         } elseif (is_string($reference)) {
-            $reference = json_decode($reference, true);
-        }
-        if (is_array($reference)) {
+            $reference = json_decode($reference);
+        } elseif (is_array($reference)) {
             $reference = (object) $reference;
         }
-        $class = $reference->_class;
-        $search = $reference->_keys;
-        return Manager::driver($class)->first($class, $search);
+        return Manager::driver($reference->_ref)->getObject($reference->_ref, $reference->_id);
     }
 }

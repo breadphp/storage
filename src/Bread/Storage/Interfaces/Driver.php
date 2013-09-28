@@ -17,7 +17,7 @@ namespace Bread\Storage\Interfaces;
 interface Driver
 {
 
-    public function store($object);
+    public function store($object, $oid = null);
 
     public function delete($object);
 

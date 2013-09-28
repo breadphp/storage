@@ -24,13 +24,34 @@ abstract class Driver
     {
         $collection = new Collection();
         foreach ($objects as $oid => $object) {
-            $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
             $collection->append($object);
         }
         return $collection;
     }
     
-    protected function hydrateObject($properties, $class)
+    public function getObjectId($object)
+    {
+        return $this->hydrationMap->getInstance($object)->getObjectId();
+    }
+    
+    protected function deleteCascade($object)
+    {
+        $class = get_class($object);
+        foreach (Configuration::get($class, 'properties') as $property => $options) {
+            if (isset($options['cascade']) && $options['cascade']) {
+                if (!is_array($object->$property)) {
+                    $cascade = array($object->$property);
+                } else {
+                    $cascade = $object->$property;
+                }
+                foreach ($cascade as $c) {
+                    Manager::driver($options['type'])->delete($c);
+                }
+            }
+        }
+    }
+    
+    protected function hydrateObject($properties, $class, $oid)
     {
         $reflector = new ReflectionClass($class);
         $promises = array();
@@ -38,12 +59,14 @@ abstract class Driver
             if (Configuration::get($class, "properties.$name.multiple")) {
                 $promises[$name] = When::all(array_map(function ($value) use ($name, $class) {
                     return $this->normalizeValue($name, $value, $class);
-                }, $value));
+                }, $value))->then(function ($array) {
+                    return new Collection($array);
+                });
             } else {
                 $promises[$name] = $this->normalizeValue($name, $value, $class);
             }
         }
-        return When::all($promises, function($properties) use ($class, $reflector) {
+        return When::all($promises, function($properties) use ($class, $reflector, $oid) {
             $object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
                 if (!$reflector->hasProperty($name)) {
@@ -53,6 +76,7 @@ abstract class Driver
                 $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
+            $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
             return $object;
         });
     }
