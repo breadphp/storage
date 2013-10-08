@@ -230,13 +230,9 @@ class LDAP extends Driver implements DriverInterface
     
     public function fetch($class, array $search = array(), array $options = array())
     {
-        return $this->fetchFromCache($class, $search, $options)->then(function ($objects) {
-            foreach ($objects as $oid => $object) {
-                $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
-            }
-            return $objects;
-        }, function($cacheKey) use ($class, $search, $options) {
-            return $this->applyOptions($class, $search, $options)->then(function($search) use ($class) {
+        // TODO Cache $oids
+        //return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
+            return $this->applyOptions($class, $search, $options)->then(function ($search) use ($class) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return $promises;
@@ -250,28 +246,41 @@ class LDAP extends Driver implements DriverInterface
                     }
                 } while ($entry = ldap_next_entry($this->link, $entry));
                 return When::all($promises);
-            })->then(function ($objects) use ($cacheKey) {
+            /*})->then(function ($objects) use ($cacheKey) {
                 return $this->storeToCache($cacheKey, $objects);
-            });
+            });*/
         })->then(array($this, 'buildCollection'));
     }
     
     public function getObject($class, $oid)
     {
         if (!$object = $this->hydrationMap->objectExists($oid)) {
-            $read = ldap_read($this->link, $oid, self::FILTER_ALL);
-            $entry = ldap_first_entry($this->link, $read);
-            $object = $this->getEntry($entry, $class, $oid);
+            $object = $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+                $read = ldap_read($this->link, $oid, self::FILTER_ALL);
+                $entry = ldap_first_entry($this->link, $read);
+                $values = $this->getAttributes($entry, $class);
+                return $this->storePropertiesToCache($cacheKey, $values);
+            })->then(function ($values) use ($class, $oid) {
+                return $this->hydrateObject($values, $class, $oid);
+            });
         }
         return ($object instanceof Promise) ? $object : When::resolve($object);
     }
     
-    protected function getEntry($entry, $class, $oid)
+    protected function getAttributes($entry, $class)
     {
         if ($attributes = ldap_get_attributes($this->link, $entry)) {
             if ($attributes = $this->normalizeAttributes($attributes, $class)) {
-                return $this->hydrateObject($attributes, $class, $oid);
+                return $attributes;
             }
+        }
+        return false;
+    }
+    
+    protected function getEntry($entry, $class, $oid)
+    {
+        if ($attributes = $this->getAttributes($entry, $class)) {
+            return $this->hydrateObject($attributes, $class, $oid);
         }
         return false;
     }

@@ -22,6 +22,7 @@ use DateTime;
 use DateInterval;
 use Doctrine\Common\Cache\FilesystemCache;
 use Doctrine\Common\Cache\ArrayCache;
+use PDO;
 
 class Doctrine extends Driver implements DriverInterface
 {
@@ -110,7 +111,8 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'//driver' => 'pdo_ibm'
+                    'driver' => 'pdo_ibm'
+                    //'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'
                 );
                 break;
             default:
@@ -131,6 +133,7 @@ class Doctrine extends Driver implements DriverInterface
     public function store($object, $oid = null)
     {
         $instance = $this->hydrationMap->getInstance($object);
+        $class = $instance->getClass();
         switch ($instance->getState()) {
           case Instance::STATE_NEW:
               $oid = $oid ? : $this->generateObjectId();
@@ -142,10 +145,10 @@ class Doctrine extends Driver implements DriverInterface
           default:
               throw new Exception('Object instance cannot be stored');
         }
-        $class = $instance->getClass();
         $this->link->beginTransaction();
         return $this->denormalize($instance->getModifiedProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
             $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+            $objectIdFieldIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
             $tables = $this->tablesFor($class);
             foreach ($tables as $tableName) {
                 list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $tableName) + array(null, null);
@@ -162,17 +165,17 @@ class Doctrine extends Driver implements DriverInterface
                       if ($isMultiple) {
                           foreach ((array) $values[$propertyName] as $key => $value) {
                               $this->link->insert($tableName, array(
-                                  $objectIdFieldName => $oid,
-                                  self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME => $key,
-                                  $propertyName => $value
+                                  $objectIdFieldIdentifier => $oid,
+                                  $this->link->quoteIdentifier(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME) => $key,
+                                  $this->link->quoteIdentifier($propertyName) => $value
                               ));
                           }
                       } elseif ($isTaggable) {
                           foreach ((array) $values[$propertyName] as $key => $value) {
                               $this->link->insert($tableName, array(
                                   $objectIdFieldName => $oid,
-                                  self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $key,
-                                  $propertyName => $value
+                                  $this->link->quoteIdentifier(self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME) => $key,
+                                  $this->link->quoteIdentifier($propertyName) => $value
                               ));
                           }
                       } else {
@@ -213,7 +216,7 @@ class Doctrine extends Driver implements DriverInterface
                           $queryBuilder = $this->link->createQueryBuilder();
                           $queryBuilder->delete($tableName)->where($queryBuilder->expr()->gte(
                               self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME,
-                              $queryBuilder->createNamedParameter(count($values[$propertyName]), \PDO::PARAM_INT)
+                              $queryBuilder->createNamedParameter(count($values[$propertyName]), PDO::PARAM_INT)
                           ))->execute();
                       } elseif ($isTaggable) {
                           $existingQueryBuilder = $this->link->createQueryBuilder();
@@ -309,47 +312,45 @@ class Doctrine extends Driver implements DriverInterface
     
     public function fetch($class, array $search = array(), array $options = array())
     {
-        return $this->fetchFromCache($class, $search, $options)->then(function ($objects) {
-            foreach ($objects as $oid => $object) {
-                $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
-            }
-            return $objects;
-        }, function($cacheKey) use ($class, $search, $options) {
-            return $this->select($class, $search, $options)->then(function ($result) use ($class) {
-                $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
-                $promises = array();
-                foreach ($result->fetchAll() as $row) {
-                    $oid = $row[$objectIdFieldName];
-                    $promises[$oid] = $this->getObject($class, $oid);
-                }
-                return When::all($promises);
-            })->then(function ($objects) use ($cacheKey) {
-                return $this->storeToCache($cacheKey, $objects);
+        return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
+            return $this->select($class, $search, $options)->then(function ($result) {
+                return $result->fetchAll(PDO::FETCH_COLUMN, 0);
+            })->then(function ($oids) use ($cacheKey) {
+                return $this->storeToCache($cacheKey, $oids);
             });
+        })->then(function ($oids) use ($class) {
+            return When::all(array_map(function ($oid) use ($class) {
+                return $this->getObject($class, $oid);
+            }, $oids));
         })->then(array($this, 'buildCollection'));
     }
     
     public function getObject($class, $oid)
     {
-        $tableNames = $this->tablesFor($class);
-        $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
-        $tableAlias = $this->link->quoteIdentifier('t');
-        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
-        $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
         if (!$object = $this->hydrationMap->objectExists($oid)) {
-            $propertiesQueryBuilder = $this->link->createQueryBuilder();
-            $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
+            $object = $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+                $tableNames = $this->tablesFor($class);
+                $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+                $tableAlias = $this->link->quoteIdentifier('t');
+                $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+                $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
+                
+                $propertiesQueryBuilder = $this->link->createQueryBuilder();
+                $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
                 ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
-                ->execute()->fetch(\PDO::FETCH_ASSOC);
-            foreach ($tableNames as $multiplePropertyTableName) {
-                list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
-                $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
-                $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
-                $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
+                ->execute()->fetch(PDO::FETCH_ASSOC);
+                foreach ($tableNames as $multiplePropertyTableName) {
+                    list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
+                    $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
+                    $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
+                    $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
                     ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
-                    ->execute()->fetchAll(\PDO::FETCH_COLUMN);
-            }
-            $object = $this->hydrateObject($values, $class, $oid);
+                    ->execute()->fetchAll(PDO::FETCH_COLUMN);
+                }
+                return $this->storePropertiesToCache($cacheKey, $values);
+            })->then(function ($values) use ($class, $oid) {
+                return $this->hydrateObject($values, $class, $oid);
+            });
         }
         return ($object instanceof Promise) ? $object : When::resolve($object);
     }
@@ -460,6 +461,7 @@ class Doctrine extends Driver implements DriverInterface
                     $denormalizedValue = (int) Types\DateInterval::calculateSeconds($value);
                     return When::resolve($denormalizedValue);
                 } else {
+                    // TODO Consider to store $value in Reference constructor (promises?)
                     return Manager::driver(get_class($value))->store($value)->then(function($object) {
                         return (string) new Reference($object);
                     });
@@ -481,6 +483,18 @@ class Doctrine extends Driver implements DriverInterface
                   case '$or':
                   case '$nor':
                       $where[] = $this->denormalizeSearch($queryBuilder, $condition, $class, $property);
+                      continue 2;
+                  case '$match':
+                      // TODO Check platform support
+                      $fields = $condition['$fields'];
+                      $against = $condition['$against'];
+                      $fieldsIdentifiers = array_map(function ($field) {
+                          return $this->link->quoteIdentifier($field);
+                      }, $fields);
+                      $match = implode(', ', $fieldsIdentifiers);
+                      $againstPlaceholder = $queryBuilder->createNamedParameter($against);
+                      $resolve = "MATCH ({$match}) AGAINST ({$againstPlaceholder} IN BOOLEAN MODE)";
+                      $where[] = $resolve;
                       continue 2;
                   default:
                       $promises[] = $this->denormalizeCondition($queryBuilder, $property, $condition, $class);

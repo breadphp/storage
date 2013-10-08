@@ -7,6 +7,8 @@ use Bread\Promises\When;
 use Bread\Caching\Cache;
 use Bread\Configuration\Manager as Configuration;
 use ReflectionClass;
+use Traversable;
+use Bread\Storage\Exceptions\DriverNotRegistered;
 
 abstract class Driver
 {
@@ -39,10 +41,10 @@ abstract class Driver
         $class = get_class($object);
         foreach (Configuration::get($class, 'properties') as $property => $options) {
             if (isset($options['cascade']) && $options['cascade']) {
-                if (!is_array($object->$property)) {
-                    $cascade = array($object->$property);
-                } else {
+                if ($object->$property instanceof Traversable || is_array($object->$property)) {
                     $cascade = $object->$property;
+                } else {
+                    $cascade = array($object->$property);
                 }
                 foreach ($cascade as $c) {
                     Manager::driver($options['type'])->delete($c);
@@ -79,6 +81,21 @@ abstract class Driver
             $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
             return $object;
         });
+    }
+    
+    protected function fetchPropertiesFromCache($class, $oid)
+    {
+        $cacheKey = implode('::', array(
+            __CLASS__,
+            $class,
+            $oid
+        ));
+        return Cache::instance()->fetch($cacheKey);
+    }
+    
+    protected function storePropertiesToCache($cacheKey, $values)
+    {
+        return Cache::instance()->store($cacheKey, $values);
     }
     
     protected function fetchFromCache($class, array $search = array(), array $options = array())
