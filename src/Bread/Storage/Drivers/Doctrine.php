@@ -62,7 +62,8 @@ class Doctrine extends Driver implements DriverInterface
     {
         $options = array_merge(array(
             'cache' => true,
-            'debug' => false
+            'debug' => false,
+            'charset' => 'utf8'
         ), $options);
         $scheme = parse_url($uri, PHP_URL_SCHEME);
         switch ($scheme) {
@@ -71,6 +72,7 @@ class Doctrine extends Driver implements DriverInterface
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'path' => parse_url($uri, PHP_URL_PATH),
+                    'charset' => $options['charset'],
                     'driver' => 'pdo_sqlite'
                 );
                 break;
@@ -81,6 +83,7 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
+                    'charset' => $options['charset'],
                     'driver' => 'pdo_mysql'
                 );
                 break;
@@ -91,6 +94,7 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
+                    'charset' => $options['charset'],
                     'driver' => 'pdo_pgsql'
                 );
                 break;
@@ -101,6 +105,7 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
+                    'charset' => $options['charset'],
                     'driver' => 'pdo_sqlsrv'
                 );
                 break;
@@ -111,6 +116,7 @@ class Doctrine extends Driver implements DriverInterface
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
+                    'charset' => $options['charset'],
                     'driver' => 'pdo_ibm'
                     //'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'
                 );
@@ -462,9 +468,17 @@ class Doctrine extends Driver implements DriverInterface
                     return When::resolve($denormalizedValue);
                 } else {
                     // TODO Consider to store $value in Reference constructor (promises?)
-                    return Manager::driver(get_class($value))->store($value)->then(function($object) {
-                        return (string) new Reference($object);
-                    });
+                    $driver = Manager::driver(get_class($value));
+                    $hydrationMap = $driver->getHydrationMap();
+                    $instance = $hydrationMap->getInstance($value);
+                    switch ($instance->getState()) {
+                        case Instance::STATE_NEW:
+                            return $driver->store($value)->then(function($object) {
+                                return (string) new Reference($object);
+                            });
+                        default:
+                            return When::resolve((string) new Reference($value));
+                    }
                 }
             }
         } else {
