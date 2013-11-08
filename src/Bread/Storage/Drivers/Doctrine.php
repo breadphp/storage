@@ -260,7 +260,7 @@ class Doctrine extends Driver implements DriverInterface
                       break;
                 }
             }
-            return $object;
+            return $this->getObject($class, $oid);
         })->then(function ($object) use ($instance) {
             $this->link->commit();
             $instance->setObject($object);
