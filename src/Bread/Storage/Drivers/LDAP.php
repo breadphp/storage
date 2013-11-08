@@ -293,7 +293,7 @@ class LDAP extends Driver implements DriverInterface
         $filter = array_merge($this->filter, array(
             'objectClass' => array('$all' => Configuration::get($class, 'storage.options.objectClass')
         )));
-        return $this->denormalizeSearch($class, array($filter, $search))->then(function($filter) use ($class, $options) {
+        return $this->denormalizeSearch($class, array($filter, $search))->then(function ($filter) use ($class, $options) {
             $reflector = new ReflectionClass($class);
             $attributes = array();
             foreach ($reflector->getProperties() as $property) {
