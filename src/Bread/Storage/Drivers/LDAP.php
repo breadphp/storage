@@ -119,7 +119,7 @@ class LDAP extends Driver implements DriverInterface
         parse_str($params['query'], $this->filter);
         $this->hydrationMap = new Map();
         $this->useCache = $options['cache'];
-        $this->pla = new LDAP\PLA($this->link);
+        $this->pla = new LDAP\PLA($this->link, $this->base);
     }
     
     public function __destruct() {

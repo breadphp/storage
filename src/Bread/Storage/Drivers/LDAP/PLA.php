@@ -14,10 +14,16 @@ class PLA
 
     protected $cache;
 
-    public function __construct($link)
+    protected $base;
+
+    protected $schemaDN;
+
+    public function __construct($link, $base)
     {
         $this->link = $link;
         $this->cache = new Cache\ArrayCache();
+        $this->base = $base;
+        $this->schemaDN = $this->getSchemaDN($base);
     }
 
 
@@ -27,7 +33,6 @@ class PLA
             return $attribute;
         } else {
             $schemas = $this->getRawSchema(array(
-                    'schema_dn' => 'cn=Subschema',
                     'schema_filter' => '(objectClass=*)',
                     'schema_to_fetch' => 'attributeTypes'
                 ));
@@ -59,7 +64,6 @@ class PLA
             return $objClass;
         } else {
             $schemas = $this->getRawSchema(array(
-                'schema_dn' => 'cn=Subschema',
                 'schema_filter' => '(objectClass=*)',
                 'schema_to_fetch' => 'objectclasses'
             ));
@@ -98,13 +102,16 @@ class PLA
         if($schema = $this->cache->fetch($search['schema_to_fetch'])){
             return $schema;
         } else {
-            $schema_search = @ldap_read($this->link, $search['schema_dn'], $search['schema_filter'], array(
+            $schema_search = @ldap_read($this->link, $this->schemaDN, $search['schema_filter'], array(
                 strtolower($search['schema_to_fetch'])
             ), false, 0, 10, LDAP_DEREF_NEVER);
             $schema_entries = @ldap_get_entries($this->link, $schema_search);
-            $schema = $schema_entries[0][strtolower($search['schema_to_fetch'])];
-            unset($schema['count']);
-            $this->cache->save($search['schema_to_fetch'], $schema);
+            $schema = array();
+            if(isset($schema_entries[0][strtolower($search['schema_to_fetch'])])){
+                $schema = $schema_entries[0][strtolower($search['schema_to_fetch'])];
+                unset($schema['count']);
+                $this->cache->save($search['schema_to_fetch'], $schema);
+            }
             return $schema;
         }
     }
@@ -112,7 +119,6 @@ class PLA
     protected function SchemaSyntaxes()
     {
         $schemas = $this->getRawSchema(array(
-            'schema_dn' => 'cn=Subschema',
             'schema_filter' => '(objectClass=*)',
             'schema_to_fetch' => 'ldapSyntaxes'
         ));
@@ -122,5 +128,12 @@ class PLA
             $syntaxes[strtolower(trim($syntax->oid))] = $syntax;
         }
         return $syntaxes;
+    }
+
+    protected function getSchemaDN($base)
+    {
+        $schema_dn = @ldap_read($this->link, $base, '(objectClass=*)', array('subschemaSubentry'), false, 0, 10, LDAP_DEREF_NEVER);
+        $schema_entries = @ldap_get_entries($this->link, $schema_dn);
+        return $schema_entries[0]['subschemasubentry'][0];
     }
 }
