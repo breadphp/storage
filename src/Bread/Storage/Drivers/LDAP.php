@@ -351,6 +351,7 @@ class LDAP extends Driver implements DriverInterface
             case 'binary':
                 return base64_encode($value);
             case 'DateTime':
+                /* FIXME Too slow
                 $attributeType = $this->pla->getSchemaAttribute($name);
                 switch ($attributeType->getType()) {
                   case AttributeType::TYPE_GENERALIZED_TIME:
@@ -359,8 +360,11 @@ class LDAP extends Driver implements DriverInterface
                   default:
                       $dateTimeFormat = self::DATETIME_FORMAT;
                 }
+                 */
+                $dateTimeFormat = self::DATETIME_FORMAT;
                 return When::resolve(DateTime::createFromFormat($dateTimeFormat, $value));
             default:
+                /* FIXME Too slow
                 $attributeType = $this->pla->getSchemaAttribute($name);
                 switch ($attributeType->getType()) {
                   case AttributeType::TYPE_DN:
@@ -368,6 +372,7 @@ class LDAP extends Driver implements DriverInterface
                       // FIXME $type could be abstract, how to infer class from DN?
                       return $this->getObject($type, $value);
                 }
+                 */
                 if (is_array($value)) {
                     $normalizedValues = array();
                     foreach ($value as $v) {
