@@ -7,6 +7,9 @@ namespace Bread\Storage\Drivers\LDAP;
 class AttributeType extends SchemaItem
 {
 
+    const TYPE_DN = 'Distinguished Name';
+    const TYPE_GENERALIZED_TIME = 'Generalized Time';
+    const FORMAT_GENERALIZED_TIME = 'YmdHisZ';
     /**
      * The schema item's name.
      */
@@ -134,6 +137,10 @@ class AttributeType extends SchemaItem
      */
     public function setType($type) {
         $this->type = $type;
+    }
+    
+    public function getType() {
+        return $this->type;
     }
 
     public function setSupAttribute($attribute) {
