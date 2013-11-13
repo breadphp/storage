@@ -188,7 +188,7 @@ class Doctrine extends Driver implements DriverInterface
                           $values[$objectIdFieldName] = $oid;
                           $this->link->insert($tableName, $values);
                           // TODO replace strategy with computed attributes outside storage
-                          foreach (Configuration::get($class, "properties") as $property => $options) {
+                          foreach ((array) Configuration::get($class, "properties") as $property => $options) {
                               switch (Configuration::get($class, "properties.$property.strategy")) {
                                 case 'autoincrement':
                                     $instance->setProperty($object, $property, (int) $this->link->lastInsertId());
@@ -343,15 +343,15 @@ class Doctrine extends Driver implements DriverInterface
                 
                 $propertiesQueryBuilder = $this->link->createQueryBuilder();
                 $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
-                ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
-                ->execute()->fetch(PDO::FETCH_ASSOC);
+                    ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
+                    ->execute()->fetch(PDO::FETCH_ASSOC);
                 foreach ($tableNames as $multiplePropertyTableName) {
                     list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
                     $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
                     $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
                     $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
-                    ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
-                    ->execute()->fetchAll(PDO::FETCH_COLUMN);
+                        ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
+                        ->execute()->fetchAll(PDO::FETCH_COLUMN);
                 }
                 return $this->storePropertiesToCache($cacheKey, $values);
             })->then(function ($values) use ($class, $oid) {
@@ -443,6 +443,7 @@ class Doctrine extends Driver implements DriverInterface
     
     protected function denormalizeValue($value, $field, $class)
     {
+        $type = Configuration::get($class, "properties.$field.type");
         if ($value instanceof Promise) {
             return $value->then(function($value) use ($field, $class) {
                 return $this->denormalizeValue($value, $field, $class)->then(null, function() {
@@ -457,28 +458,25 @@ class Doctrine extends Driver implements DriverInterface
                 $denormalizedValuePromises[$k] = $this->denormalizeValue($v, $field, $class);
             }
             return When::all($denormalizedValuePromises);
+        } elseif (isset(self::$typesMap[$type])) {
+            $doctrineType = self::$typesMap[$type];
+            return When::resolve($this->link->convertToDatabaseValue($value, $doctrineType));
         } elseif (is_object($value)) {
-            $type = Configuration::get($class, "properties.$field.type");
-            if (isset(self::$typesMap[$type])) {
-                $doctrineType = self::$typesMap[$type];
-                return When::resolve($this->link->convertToDatabaseValue($value, $doctrineType));
+            if ($value instanceof DateInterval) {
+                $denormalizedValue = (int) Types\DateInterval::calculateSeconds($value);
+                return When::resolve($denormalizedValue);
             } else {
-                if ($value instanceof DateInterval) {
-                    $denormalizedValue = (int) Types\DateInterval::calculateSeconds($value);
-                    return When::resolve($denormalizedValue);
-                } else {
-                    // TODO Consider to store $value in Reference constructor (promises?)
-                    $driver = Manager::driver(get_class($value));
-                    $hydrationMap = $driver->getHydrationMap();
-                    $instance = $hydrationMap->getInstance($value);
-                    switch ($instance->getState()) {
-                        case Instance::STATE_NEW:
-                            return $driver->store($value)->then(function($object) {
-                                return (string) new Reference($object);
-                            });
-                        default:
-                            return When::resolve((string) new Reference($value));
-                    }
+                // TODO Consider to store $value in Reference constructor (promises?)
+                $driver = Manager::driver(get_class($value));
+                $hydrationMap = $driver->getHydrationMap();
+                $instance = $hydrationMap->getInstance($value);
+                switch ($instance->getState()) {
+                    case Instance::STATE_NEW:
+                        return $driver->store($value)->then(function($object) {
+                            return (string) new Reference($object);
+                        });
+                    default:
+                        return When::resolve((string) new Reference($value));
                 }
             }
         } else {
