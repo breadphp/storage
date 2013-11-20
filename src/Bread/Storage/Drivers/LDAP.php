@@ -166,9 +166,7 @@ class LDAP extends Driver implements DriverInterface
                         throw new Exception("Missing 'storage.options.objectClass' option");
                     }
                     $properties['objectClass'] = $objectClass;
-                    if (!ldap_add($this->link, $oid, array_filter($properties, function ($value) {
-                      return $value !== null;
-                    }))) {
+                    if (!ldap_add($this->link, $oid, array_filter($properties))) {
                         throw new Exception(ldap_error($this->link));
                     }
                     $this->invalidateCacheFor($instance->getClass());
@@ -364,15 +362,14 @@ class LDAP extends Driver implements DriverInterface
                 $dateTimeFormat = self::DATETIME_FORMAT;
                 return When::resolve(DateTime::createFromFormat($dateTimeFormat, $value));
             default:
-                /* FIXME Too slow
+                /* FIXME Too slow */
                 $attributeType = $this->pla->getSchemaAttribute($name);
-                switch ($attributeType->getType()) {
+                switch ($attributeType->getSyntax()) {
                   case AttributeType::TYPE_DN:
                       // TODO Enforce check on LDAP driver/same instance?
                       // FIXME $type could be abstract, how to infer class from DN?
                       return $this->getObject($type, $value);
                 }
-                 */
                 if (is_array($value)) {
                     $normalizedValues = array();
                     foreach ($value as $v) {
@@ -409,7 +406,7 @@ class LDAP extends Driver implements DriverInterface
                 $driver = Manager::driver(get_class($value));
                 return $driver->store($value)->then(function($object) use ($driver, $field) {
                     $attributeType = $this->pla->getSchemaAttribute($field);
-                    switch ($attributeType->getType()) {
+                    switch ($attributeType->getSyntax()) {
                       case AttributeType::TYPE_DN:
                           // TODO Enforce check on LDAP driver/same instance?
                           return $this->generateDN($object);
