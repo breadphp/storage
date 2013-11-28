@@ -200,8 +200,9 @@ class Doctrine extends Driver implements DriverInterface
                   case Instance::STATE_MANAGED:
                       if ($isMultiple) {
                           $existingQueryBuilder = $this->link->createQueryBuilder();
+                          $objectIdExpr = $existingQueryBuilder->expr()->eq($objectIdFieldName, $existingQueryBuilder->createNamedParameter($oid));
                           $existingQueryBuilder->select(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME)->from($tableName, 't')
-                            ->where($existingQueryBuilder->expr()->eq($objectIdFieldName, $existingQueryBuilder->createNamedParameter($oid)));
+                            ->where($objectIdExpr);
                           $existingCount = $existingQueryBuilder->execute()->rowCount();
                           foreach ((array) $values[$propertyName] as $key => $value) {
                               if ($key >= $existingCount) {
@@ -220,7 +221,7 @@ class Doctrine extends Driver implements DriverInterface
                               }
                           }
                           $queryBuilder = $this->link->createQueryBuilder();
-                          $queryBuilder->delete($tableName)->where($queryBuilder->expr()->gte(
+                          $queryBuilder->delete($tableName)->where($objectIdExpr, $queryBuilder->expr()->gte(
                               self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME,
                               $queryBuilder->createNamedParameter(count($values[$propertyName]), PDO::PARAM_INT)
                           ))->execute();
