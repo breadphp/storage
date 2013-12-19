@@ -112,7 +112,7 @@ class AttributeType extends SchemaItem
                     break;
                 case 'syntax':
                     $explode = explode("{", trim($value, "}"));
-                    $this->$attribute = array_shift($explode);
+                    $this->$attribute = trim(array_shift($explode),"'");
                     if ($explode) {
                         $this->max_length = array_shift($explode);
                     }
@@ -138,7 +138,7 @@ class AttributeType extends SchemaItem
     public function setType($type) {
         $this->type = $type;
     }
-    
+
     public function getType()
     {
         return $this->type;

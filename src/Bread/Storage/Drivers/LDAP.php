@@ -91,12 +91,12 @@ class LDAP extends Driver implements DriverInterface
     const LDAP_MORE_RESULTS_TO_RETURN = 0x5f;
     const LDAP_CLIENT_LOOP = 0x60;
     const LDAP_REFERRAL_LIMIT_EXCEEDED = 0x61;
-    
+
     protected $link;
     protected $base;
     protected $filter;
     protected $pla;
-    
+
     public function __construct($uri, array $options = array())
     {
         $params = array_merge(array(
@@ -121,11 +121,11 @@ class LDAP extends Driver implements DriverInterface
         $this->useCache = $options['cache'];
         $this->pla = new LDAP\PLA($this->link, $this->base);
     }
-    
+
     public function __destruct() {
         ldap_close($this->link);
     }
-    
+
     public function store($object, $oid = null)
     {
         $instance = $this->hydrationMap->getInstance($object);
@@ -188,7 +188,7 @@ class LDAP extends Driver implements DriverInterface
                 });
         }
     }
-    
+
     public function delete($object)
     {
         $instance = $this->hydrationMap->getInstance($object);
@@ -210,14 +210,14 @@ class LDAP extends Driver implements DriverInterface
         }
         return When::resolve($object);
     }
-    
+
     public function count($class, array $search = array(), array $options = array())
     {
         return $this->applyOptions($class, $search, $options)->then(function ($search) {
             return ldap_count_entries($this->link, $search);
         });
     }
-    
+
     public function first($class, array $search = array(), array $options = array())
     {
         $options['limit'] = 1;
@@ -225,7 +225,7 @@ class LDAP extends Driver implements DriverInterface
             return current($results) ? : When::reject();
         });
     }
-    
+
     public function fetch($class, array $search = array(), array $options = array())
     {
         // TODO Cache $oids
@@ -239,8 +239,10 @@ class LDAP extends Driver implements DriverInterface
                     $oid = ldap_get_dn($this->link, $entry);
                     if ($object = $this->hydrationMap->objectExists($oid)) {
                         $promises[$oid] = When::resolve($object);
-                    } elseif ($object = $this->getEntry($entry, $class, $oid)) {
-                        $promises[$oid] = $object;
+                    } else {
+                        $promises[$oid] = $this->createObjectPlaceholder($class, $oid)->then(function($object) use ($entry, $class, $oid){
+                            return $this->getEntry($object, $entry, $class, $oid);
+                        });
                     }
                 } while ($entry = ldap_next_entry($this->link, $entry));
                 return When::all($promises);
@@ -249,43 +251,50 @@ class LDAP extends Driver implements DriverInterface
             });*/
         })->then(array($this, 'buildCollection'));
     }
-    
+
     public function getObject($class, $oid)
     {
         if (!$object = $this->hydrationMap->objectExists($oid)) {
-            $object = $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
-                $read = ldap_read($this->link, $oid, self::FILTER_ALL);
-                $entry = ldap_first_entry($this->link, $read);
-                $values = $this->getAttributes($entry, $class);
-                return $this->storePropertiesToCache($cacheKey, $values);
-            })->then(function ($values) use ($class, $oid) {
-                return $this->hydrateObject($values, $class, $oid);
+            $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid) {
+                return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+                    $read = ldap_read($this->link, $oid, self::FILTER_ALL);
+                    $entry = ldap_first_entry($this->link, $read);
+                    $values = $this->getAttributes($entry, $class);
+                    return $this->storePropertiesToCache($cacheKey, $values);
+                })->then(function ($values) use ($object, $class, $oid) {
+                    return $this->hydrateObject($object, $values, $class, $oid);
+                });
             });
         }
         return ($object instanceof Promise) ? $object : When::resolve($object);
     }
-    
+
     protected function getAttributes($entry, $class)
     {
+        $reflector = new ReflectionClass($class);
         if ($attributes = ldap_get_attributes($this->link, $entry)) {
-            if ($attributes = $this->normalizeAttributes($attributes, $class)) {
+            $properties = array();
+            foreach ($reflector->getProperties() as $property) {
+                $properties[$property->name] = true;
+            }
+            if ($attributes = $this->normalizeAttributes(array_intersect_key($attributes, $properties), $class)) {
                 return $attributes;
             }
         }
         return false;
     }
-    
-    protected function getEntry($entry, $class, $oid)
+
+    protected function getEntry($object, $entry, $class, $oid)
     {
         if ($attributes = $this->getAttributes($entry, $class)) {
-            return $this->hydrateObject($attributes, $class, $oid);
+            return $this->hydrateObject($object, $attributes, $class, $oid);
         }
         return false;
     }
-    
+
     public function purge($class, array $search = array(), array $options = array())
     {}
-    
+
     protected function applyOptions($class, array $search = array(), array $options = array())
     {
         $filter = array_merge($this->filter, array(
@@ -317,7 +326,7 @@ class LDAP extends Driver implements DriverInterface
             return $search;
         });
     }
-    
+
     protected function normalizeAttributes(array $attributes, $class)
     {
         $normalizedAttributes = array();
@@ -334,7 +343,7 @@ class LDAP extends Driver implements DriverInterface
         }
         return $normalizedAttributes;
     }
-    
+
     protected function normalizeValue($name, $value, $class)
     {
         if (Reference::is($value)) {
@@ -380,7 +389,7 @@ class LDAP extends Driver implements DriverInterface
                 return When::resolve($value);
         }
     }
-    
+
     protected function denormalize($values, $class)
     {
         $promises = array();
@@ -389,7 +398,7 @@ class LDAP extends Driver implements DriverInterface
         }
         return When::all($promises);
     }
-    
+
     protected function denormalizeValue($value, $field, $class)
     {
         if ($value instanceof Promise) {
@@ -425,7 +434,7 @@ class LDAP extends Driver implements DriverInterface
             return When::resolve($value);
         }
     }
-    
+
     protected function denormalizeSearch($class, $search, $logic = '$and')
     {
         $filters = array();
@@ -457,7 +466,7 @@ class LDAP extends Driver implements DriverInterface
               });
         }
     }
-    
+
     protected function denormalizeCondition($class, $property, $condition, $negate = false)
     {
         if ($reference = Reference::is($condition)) {
@@ -519,7 +528,7 @@ class LDAP extends Driver implements DriverInterface
             return $this->buildCondition($property, $value, '=', $negate);
         });
     }
-    
+
     protected function buildFilter(array $conditions, $logic = '$and', $negate = false)
     {
         switch ($logic) {
@@ -535,7 +544,7 @@ class LDAP extends Driver implements DriverInterface
               break;
           default:
               throw new UnsupportedLogic(__CLASS__, $logic);
-              
+
         }
         if (!$conditions) {
             return null;
@@ -543,13 +552,13 @@ class LDAP extends Driver implements DriverInterface
         $filter = "{$logic}(" . implode(')(', array_filter($conditions)) . ")";
         return $negate ? "!($filter)" : $filter;
     }
-    
+
     protected function buildCondition($property, $value, $operator = '=', $negate = false)
     {
         $condition = $property . $operator . $value;
         return $negate ? "!($condition)" : $condition;
     }
-    
+
     protected function getBase($class)
     {
         $base = array(
@@ -558,7 +567,7 @@ class LDAP extends Driver implements DriverInterface
         );
         return implode(',', $base);
     }
-    
+
     protected function generateDN($object)
     {
         $class = get_class($object);
@@ -566,15 +575,15 @@ class LDAP extends Driver implements DriverInterface
             throw new Exception("Option 'rdn' mandatory to store $class with " . __CLASS__);
         }
         $dn = array();
-        $dn[] = "{$rdn}={$object->$rdn}"; 
+        $dn[] = "{$rdn}={$object->$rdn}";
         $dn[] = $this->getBase($class);
         return implode(',', $dn);
     }
-    
+
     /*
      * PHP LDAP driver does not support atomic operations,
      * therefore inconsistencies may arise using autoincrement values.
-     * 
+     *
      * TODO Workaround using shell's ldapmodify delete/add operations
      */
     protected function autoincrement($class)
@@ -591,7 +600,7 @@ class LDAP extends Driver implements DriverInterface
         ));
         return $sequenceNumber;
     }
-    
+
     protected function littleEndian($hex) {
         $result = '';
         for ($x = strlen($hex) - 2; $x >= 0; $x = $x - 2) {
@@ -599,7 +608,7 @@ class LDAP extends Driver implements DriverInterface
         }
         return $result;
     }
-    
+
     protected function binSIDtoText($binsid, $pop = true) {
         $hex_sid = bin2hex($binsid);
         $rev = hexdec(substr($hex_sid, 0, 2)); // Get revision-part of SID

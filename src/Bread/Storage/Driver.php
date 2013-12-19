@@ -14,14 +14,14 @@ abstract class Driver
 {
     protected $hydrationMap;
     protected $useCache = true;
-    
+
     abstract protected function normalizeValue($name, $value, $class);
 
     public function getHydrationMap()
     {
         return $this->hydrationMap;
     }
-    
+
     public function buildCollection(array $objects)
     {
         $collection = new Collection();
@@ -30,12 +30,12 @@ abstract class Driver
         }
         return $collection;
     }
-    
+
     public function getObjectId($object)
     {
         return $this->hydrationMap->getInstance($object)->getObjectId();
     }
-    
+
     protected function deleteCascade($object)
     {
         $class = get_class($object);
@@ -52,8 +52,16 @@ abstract class Driver
             }
         }
     }
-    
-    protected function hydrateObject($properties, $class, $oid)
+
+    protected function createObjectPlaceholder($class, $oid)
+    {
+        $reflector = new ReflectionClass($class);
+        $object = $reflector->newInstanceWithoutConstructor();
+        $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
+        return When::resolve($object);
+    }
+
+    protected function hydrateObject($object, $properties, $class, $oid)
     {
         $reflector = new ReflectionClass($class);
         $promises = array();
@@ -68,8 +76,8 @@ abstract class Driver
                 $promises[$name] = $this->normalizeValue($name, $value, $class);
             }
         }
-        return When::all($promises, function($properties) use ($class, $reflector, $oid) {
-            $object = $reflector->newInstanceWithoutConstructor();
+        return When::all($promises, function($properties) use ($class, $reflector, $oid, $object) {
+            //$object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
                 if (!$reflector->hasProperty($name)) {
                     continue;
@@ -82,7 +90,7 @@ abstract class Driver
             return $object;
         });
     }
-    
+
     protected function fetchPropertiesFromCache($class, $oid)
     {
         $cacheKey = implode('::', array(
@@ -92,12 +100,12 @@ abstract class Driver
         ));
         return Cache::instance()->fetch($cacheKey);
     }
-    
+
     protected function storePropertiesToCache($cacheKey, $values)
     {
         return Cache::instance()->store($cacheKey, $values);
     }
-    
+
     protected function fetchFromCache($class, array $search = array(), array $options = array())
     {
         $cacheKey = implode('::', array(
@@ -110,14 +118,14 @@ abstract class Driver
         }
         return Cache::instance()->fetch($cacheKey);
     }
-    
+
     protected function storeToCache($cacheKey, $objects) {
         if (!$this->useCache) {
             return $objects;
         }
         return Cache::instance()->store($cacheKey, $objects);
     }
-    
+
     protected function invalidateCacheFor($class)
     {
         $cacheKey = implode('::', array(
