@@ -37,11 +37,11 @@ class Doctrine extends Driver implements DriverInterface
     const TAGGABLE_PROPERTY_TABLE_SEPARATOR = '-';
 
     protected $link;
-
+    
     protected $schemaManager;
-
+    
     protected $cache;
-
+    
     // TODO Move to configuration?
     protected static $typesMap = array(
         'boolean' => Type::BOOLEAN,
@@ -57,7 +57,7 @@ class Doctrine extends Driver implements DriverInterface
         'Bread\Types\DateTime' => BreadDateTime::NAME,
         'Bread\Types\DateInterval' => Type::INTEGER
     );
-
+    
     public function __construct($uri, array $options = array())
     {
         $options = array_merge(array(
@@ -117,8 +117,8 @@ class Doctrine extends Driver implements DriverInterface
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
                     'charset' => $options['charset'],
-                    'driver' => 'pdo_ibm'
-                    //'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'
+                    //'driver' => 'pdo_ibm'
+                    'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'
                 );
                 break;
             default:
@@ -316,7 +316,7 @@ class Doctrine extends Driver implements DriverInterface
             return current($results) ? : When::reject($class);
         });
     }
-
+    
     public function fetch($class, array $search = array(), array $options = array())
     {
         return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
@@ -331,34 +331,32 @@ class Doctrine extends Driver implements DriverInterface
             }, $oids));
         })->then(array($this, 'buildCollection'));
     }
-
+    
     public function getObject($class, $oid)
     {
         if (!$object = $this->hydrationMap->objectExists($oid)) {
-            $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid){
-                return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
-                    $tableNames = $this->tablesFor($class);
-                    $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
-                    $tableAlias = $this->link->quoteIdentifier('t');
-                    $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
-                    $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
-
-                    $propertiesQueryBuilder = $this->link->createQueryBuilder();
-                    $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
-                        ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
-                        ->execute()->fetch(PDO::FETCH_ASSOC);
-                    foreach ($tableNames as $multiplePropertyTableName) {
-                        list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
-                        $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
-                        $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
-                        $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
-                            ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
-                            ->execute()->fetchAll(PDO::FETCH_COLUMN);
-                    }
-                    return $this->storePropertiesToCache($cacheKey, $values);
-                })->then(function ($values) use ($object, $class, $oid) {
-                    return $this->hydrateObject($object, $values, $class, $oid);
-                });
+            $object = $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+                $tableNames = $this->tablesFor($class);
+                $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+                $tableAlias = $this->link->quoteIdentifier('t');
+                $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+                $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
+                
+                $propertiesQueryBuilder = $this->link->createQueryBuilder();
+                $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
+                    ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
+                    ->execute()->fetch(PDO::FETCH_ASSOC);
+                foreach ($tableNames as $multiplePropertyTableName) {
+                    list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
+                    $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
+                    $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
+                    $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
+                        ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
+                        ->execute()->fetchAll(PDO::FETCH_COLUMN);
+                }
+                return $this->storePropertiesToCache($cacheKey, $values);
+            })->then(function ($values) use ($class, $oid) {
+                return $values ? $this->hydrateObject($values, $class, $oid) : When::reject(new Exception($class));
             });
         }
         return ($object instanceof Promise) ? $object : When::resolve($object);
@@ -366,7 +364,7 @@ class Doctrine extends Driver implements DriverInterface
 
     public function purge($class, array $search = array(), array $options = array())
     {}
-
+    
     protected function select($class, array $search = array(), array $options = array())
     {
         $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
@@ -407,7 +405,7 @@ class Doctrine extends Driver implements DriverInterface
             }
         }
     }
-
+    
     protected function normalizeValue($name, $value, $class)
     {
         if (Reference::is($value)) {
@@ -434,7 +432,7 @@ class Doctrine extends Driver implements DriverInterface
               return When::resolve($value);
         }
     }
-
+    
     protected function denormalize($values, $class)
     {
         $promises = array();
@@ -443,7 +441,7 @@ class Doctrine extends Driver implements DriverInterface
         }
         return When::all($promises);
     }
-
+    
     protected function denormalizeValue($value, $field, $class)
     {
         $type = Configuration::get($class, "properties.$field.type");
@@ -486,7 +484,7 @@ class Doctrine extends Driver implements DriverInterface
             return When::resolve($value);
         }
     }
-
+    
     protected function denormalizeSearch($queryBuilder, $search, $class, $logic = '$and')
     {
         $where = array();
@@ -543,7 +541,7 @@ class Doctrine extends Driver implements DriverInterface
             return $not ? $this->link->getDatabasePlatform()->getNotExpression($expression) : $expression;
         });
     }
-
+    
     protected function denormalizeCondition($queryBuilder, $property, $condition, $class)
     {
         if ($reference = Reference::is($condition)) {
@@ -551,10 +549,10 @@ class Doctrine extends Driver implements DriverInterface
         } elseif (is_array($condition)) {
             foreach ($condition as $k => $v) {
                 $function = 'eq';
-                switch ($k) {
-                case '$in':
+                switch ((string) $k) {
+                    case '$in':
                         return $this->denormalizeValue($v, $property, $class)->then(function ($v) use ($queryBuilder, $property) {
-                            $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), array($v));
+                            $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), $v);
                             $field = $this->link->quoteIdentifier($property);
                             return "$field IN (" . implode(',', $placeholders) . ")";
                             return $this->link->getDatabasePlatform()->getInExpression($field, $placeholders);
@@ -687,6 +685,11 @@ class Doctrine extends Driver implements DriverInterface
                         $shape = "GeomFromText('Polygon($polygon)')";
                         $shapePlaceholder = $queryBuilder->createNamedParameter($shape);
                         return When::resolve("Within($field,$shapePlaceholder)");
+                    default:
+                        if (is_numeric($k)) {
+                            return $this->denormalizeCondition($queryBuilder, $property, array('$in' => $condition), $class);
+                        }
+
                 }
                 return $this->denormalizeValue($v, $property, $class)->then(function ($value) use ($queryBuilder, $property, $function) {
                     $field = $this->link->quoteIdentifier($property);
@@ -697,14 +700,14 @@ class Doctrine extends Driver implements DriverInterface
                 });
             }
         }
-        // TODO Check if this is redundant with the other one
+        // TODO Check if this is redundant with the other one 
         return $this->denormalizeValue($condition, $property, $class)->then(function ($value) use ($queryBuilder, $property) {
             $field = $this->link->quoteIdentifier($property);
             return null === $value ? $this->link->getDatabasePlatform()->getIsNullExpression($field) :
                 $queryBuilder->expr()->eq($field, $queryBuilder->createNamedParameter($value));
         });
     }
-
+    
     protected function createIndexTable()
     {
         $schema = $this->schemaManager->createSchema();
@@ -715,7 +718,7 @@ class Doctrine extends Driver implements DriverInterface
         $table->addUniqueIndex(array('table'));
         return $this->schemaManager->createTable($table);
     }
-
+    
     protected function indexTable($class)
     {
         $split = explode('\\', $class);
@@ -730,7 +733,7 @@ class Doctrine extends Driver implements DriverInterface
         ));
         return $tableName;
     }
-
+    
     protected function indexedTable($class)
     {
         if (!$this->schemaManager->tablesExist(self::INDEX_TABLE)) {
@@ -741,7 +744,7 @@ class Doctrine extends Driver implements DriverInterface
         $queryBuilder->select($this->link->quoteIdentifier('table'))->from(self::INDEX_TABLE, 't')->where($where);
         return $queryBuilder->execute()->fetchColumn(0);
     }
-
+    
     protected function tablesFor($class)
     {
         if ($this->cache->contains($class)) {
@@ -838,7 +841,7 @@ class Doctrine extends Driver implements DriverInterface
         $this->cache->save($class, $tableNames);
         return $tableNames;
     }
-
+    
     protected function mapColumnType($propertyType)
     {
         if (isset(self::$typesMap[$propertyType])) {
@@ -846,12 +849,12 @@ class Doctrine extends Driver implements DriverInterface
         }
         return Type::STRING;
     }
-
+    
     protected function getMultiplePropertyTableName($tableName, $propertyName)
     {
         return $this->link->quoteIdentifier($tableName . self::MULTIPLE_PROPERTY_TABLE_SEPARATOR . $propertyName);
     }
-
+    
     protected function columns($table)
     {
         $columns = array();
@@ -860,12 +863,12 @@ class Doctrine extends Driver implements DriverInterface
         }
         return $columns;
     }
-
+    
     protected function generateObjectId()
     {
         return uniqid();
     }
-
+    
     protected function registerTypes()
     {
         if (!Type::hasType(BreadDateTime::NAME)) {
