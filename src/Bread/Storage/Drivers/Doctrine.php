@@ -221,6 +221,7 @@ class Doctrine extends Driver implements DriverInterface
                               }
                           }
                           $queryBuilder = $this->link->createQueryBuilder();
+                          $objectIdExpr = $queryBuilder->expr()->eq($objectIdFieldName, $queryBuilder->createNamedParameter($oid));
                           $queryBuilder->delete($tableName)->where($objectIdExpr, $queryBuilder->expr()->gte(
                               self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME,
                               $queryBuilder->createNamedParameter(count($values[$propertyName]), PDO::PARAM_INT)
