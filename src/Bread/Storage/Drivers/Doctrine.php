@@ -164,6 +164,12 @@ class Doctrine extends Driver implements DriverInterface
                     continue;
                 }
                 $fields = array_keys($values);
+                $types = array();
+                foreach ($values as $k => $v) {
+                    if (is_resource($v)) {
+                        $types[$k] = Type::getType(Type::BLOB)->getBindingType();
+                    }
+                }
                 $isMultiple = $propertyName ? Configuration::get($class, "properties.$propertyName.multiple") : false;
                 $isTaggable = $propertyName ? Configuration::get($class, "properties.$propertyName.taggable") : false;
                 switch ($instance->getState()) {
@@ -174,7 +180,7 @@ class Doctrine extends Driver implements DriverInterface
                                   $objectIdFieldIdentifier => $oid,
                                   $this->link->quoteIdentifier(self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME) => $key,
                                   $this->link->quoteIdentifier($propertyName) => $value
-                              ));
+                              ), $types);
                           }
                       } elseif ($isTaggable) {
                           foreach ((array) $values[$propertyName] as $key => $value) {
@@ -182,11 +188,11 @@ class Doctrine extends Driver implements DriverInterface
                                   $objectIdFieldName => $oid,
                                   $this->link->quoteIdentifier(self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME) => $key,
                                   $this->link->quoteIdentifier($propertyName) => $value
-                              ));
+                              ), $types);
                           }
                       } else {
                           $values[$objectIdFieldName] = $oid;
-                          $this->link->insert($tableName, $values);
+                          $this->link->insert($tableName, $values, $types);
                           // TODO replace strategy with computed attributes outside storage
                           foreach ((array) Configuration::get($class, "properties") as $property => $options) {
                               switch (Configuration::get($class, "properties.$property.strategy")) {
@@ -210,14 +216,14 @@ class Doctrine extends Driver implements DriverInterface
                                       $objectIdFieldName => $oid,
                                       self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME => $key,
                                       $propertyName => $value
-                                  ));
+                                  ), $types);
                               } else {
                                   $this->link->update($tableName, array(
                                       $propertyName => $value
                                   ), array(
                                       $objectIdFieldName => $oid,
                                       self::MULTIPLE_PROPERTY_INDEX_FIELD_NAME => $key
-                                  ));
+                                  ), $types);
                               }
                           }
                           $queryBuilder = $this->link->createQueryBuilder();
@@ -240,13 +246,13 @@ class Doctrine extends Driver implements DriverInterface
                                   ), array(
                                       $objectIdFieldName => $oid,
                                       self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $tag
-                                  ));
+                                  ), $types);
                               } else {
                                   $this->link->insert($tableName, array(
                                       $objectIdFieldName => $oid,
                                       self::TAGGABLE_PROPERTY_INDEX_FIELD_NAME => $key,
                                       $propertyName => $value
-                                  ));
+                                  ), $types);
                               }
                           }
                           $deletedTags = array_diff($existingTags, $newTags);
@@ -257,7 +263,7 @@ class Doctrine extends Driver implements DriverInterface
                               ));
                           });
                       } else {
-                          $this->link->update($tableName, $values, array($objectIdFieldName => $oid));
+                          $this->link->update($tableName, $values, array($objectIdFieldName => $oid), $types);
                       }
                       break;
                 }
