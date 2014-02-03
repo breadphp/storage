@@ -165,7 +165,9 @@ class Doctrine extends Driver implements DriverInterface
                 }
                 $fields = array_keys($values);
                 $types = array();
+                $placeholders = array();
                 foreach ($values as $k => $v) {
+                    $placeholders[$this->link->quoteIdentifier($k)] = $v;
                     if (is_resource($v)) {
                         $types[$k] = Type::getType(Type::BLOB)->getBindingType();
                     }
@@ -191,8 +193,8 @@ class Doctrine extends Driver implements DriverInterface
                               ), $types);
                           }
                       } else {
-                          $values[$objectIdFieldName] = $oid;
-                          $this->link->insert($tableName, $values, $types);
+                          $placeholders[$objectIdFieldName] = $oid;
+                          $this->link->insert($tableName, $placeholders, $types);
                           // TODO replace strategy with computed attributes outside storage
                           foreach ((array) Configuration::get($class, "properties") as $property => $options) {
                               switch (Configuration::get($class, "properties.$property.strategy")) {
