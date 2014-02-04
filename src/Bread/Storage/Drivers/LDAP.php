@@ -237,7 +237,7 @@ class LDAP extends Driver implements DriverInterface
                 }
                 do {
                     $oid = ldap_get_dn($this->link, $entry);
-                    if ($object = $this->hydrationMap->objectExists($oid)) {
+                    if ($object = $this->hydrationMap->objectExists($class, $oid)) {
                         $promises[$oid] = When::resolve($object);
                     } else {
                         $promises[$oid] = $this->createObjectPlaceholder($class, $oid)->then(function($object) use ($entry, $class, $oid){
@@ -254,7 +254,7 @@ class LDAP extends Driver implements DriverInterface
 
     public function getObject($class, $oid)
     {
-        if (!$object = $this->hydrationMap->objectExists($oid)) {
+        if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
             $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid) {
                 return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
                     $read = ldap_read($this->link, $oid, self::FILTER_ALL);

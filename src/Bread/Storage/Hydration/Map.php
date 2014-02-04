@@ -7,7 +7,7 @@ use InvalidArgumentException;
 class Map extends SplObjectStorage
 {
     protected $oidMap = array();
-    
+
     public function getInstance($object)
     {
         if (!$this->offsetExists($object)) {
@@ -15,22 +15,22 @@ class Map extends SplObjectStorage
         }
         return $this->offsetGet($object);
     }
-    
-    public function objectExists($oid)
+
+    public function objectExists($class, $oid)
     {
-        return isset($this->oidMap[$oid]) ? $this->oidMap[$oid] : false;
+        return isset($this->oidMap[$class . ":" . $oid]) ? $this->oidMap[$class . ":" . $oid] : false;
     }
-    
+
     public function attach($object, $instance = null)
     {
-        $this->oidMap[$instance->getObjectId()] = $object;
+        $this->oidMap[get_class($object) . ":" . $instance->getObjectId()] = $object;
         parent::attach($object, $instance);
     }
-    
+
     public function detach($object)
     {
         $instance = $this->getInstance($object);
-        unset($this->oidMap[$instance->getObjectId()]);
+        unset($this->oidMap[get_class($object) . ":" . $instance->getObjectId()]);
         parent::detach($object);
     }
 }
