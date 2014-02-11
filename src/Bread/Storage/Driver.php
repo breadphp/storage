@@ -65,8 +65,6 @@ abstract class Driver
     {
         $reflector = new ReflectionClass($class);
         $promises = array();
-        if(!is_array($properties))
-            var_dump($oid);
         foreach ($properties as $name => $value) {
             if (Configuration::get($class, "properties.$name.multiple")) {
                 $promises[$name] = When::all(array_map(function ($value) use ($name, $class) {
@@ -78,7 +76,7 @@ abstract class Driver
                 $promises[$name] = $this->normalizeValue($name, $value, $class);
             }
         }
-        return When::all($promises, function($properties) use ($class, $reflector, $oid, $object) {
+        return When::all($promises, function ($properties) use ($class, $reflector, $oid, $object) {
             //$object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
                 if (!$reflector->hasProperty($name)) {

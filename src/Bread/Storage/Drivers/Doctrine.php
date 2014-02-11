@@ -167,9 +167,10 @@ class Doctrine extends Driver implements DriverInterface
                 $types = array();
                 $placeholders = array();
                 foreach ($values as $k => $v) {
-                    $placeholders[$this->link->quoteIdentifier($k)] = $v;
+                    $placeholder = $this->link->quoteIdentifier($k);
+                    $placeholders[$placeholder] = $v;
                     if (is_resource($v)) {
-                        $types[$k] = Type::getType(Type::BLOB)->getBindingType();
+                        $types[$placeholder] = Type::getType(Type::BLOB)->getBindingType();
                     }
                 }
                 $isMultiple = $propertyName ? Configuration::get($class, "properties.$propertyName.multiple") : false;
@@ -326,6 +327,24 @@ class Doctrine extends Driver implements DriverInterface
         });
     }
 
+    public function each($resolver, $class, array $search = array(), array $options = array())
+    {
+        $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options, $resolver) {
+            return $this->select($class, $search, $options)->then(function ($result) {
+                return $result->fetchAll(PDO::FETCH_COLUMN, 0);
+            })->then(function ($oids) use ($cacheKey) {
+                return $this->storeToCache($cacheKey, $oids);
+            });
+        })->then(function ($oids) use ($class, $resolver) {
+            return When::all(array_map(function ($oid) use ($class, $resolver) {
+                return $this->getObject($class, $oid)->then(function ($object) use ($resolver) {
+                    $this->getHydrationMap()->detach($object);
+                    $resolver->progress($object);
+                });
+            }, $oids));
+        });
+    }
+
     public function fetch($class, array $search = array(), array $options = array())
     {
         return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
@@ -363,6 +382,9 @@ class Doctrine extends Driver implements DriverInterface
                         $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
                             ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
                             ->execute()->fetchAll(PDO::FETCH_COLUMN);
+                    }
+                    if ($values === false) {
+                        throw new Exception(sprintf("Object %s (%s) does not exist.", $oid, $class));
                     }
                     return $this->storePropertiesToCache($cacheKey, $values);
                 })->then(function ($values) use ($object, $class, $oid) {
