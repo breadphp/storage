@@ -53,11 +53,11 @@ abstract class Driver
         }
     }
 
-    protected function createObjectPlaceholder($class, $oid)
+    protected function createObjectPlaceholder($class, $oid, $instance = null)
     {
         $reflector = new ReflectionClass($class);
-        $object = $reflector->newInstanceWithoutConstructor();
-        $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
+        $object = $instance ? $instance->getObject() : $reflector->newInstanceWithoutConstructor();
+        $this->hydrationMap->attach($object, $instance ? : new Instance($object, $oid, Instance::STATE_MANAGED));
         return When::resolve($object);
     }
 
@@ -86,7 +86,7 @@ abstract class Driver
                 $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
-            $this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
+            //$this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
             return $object;
         });
     }

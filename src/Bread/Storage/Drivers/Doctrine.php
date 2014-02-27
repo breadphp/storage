@@ -271,14 +271,12 @@ class Doctrine extends Driver implements DriverInterface
                       break;
                 }
             }
-            return $this->getObject($class, $oid);
+            return $this->getObject($class, $oid, $instance);
         })->then(function ($object) use ($instance) {
             $this->link->commit();
-            $instance->setObject($object);
             switch ($instance->getState()) {
                 case Instance::STATE_NEW:
                     $instance->setState(Instance::STATE_MANAGED);
-                    $this->hydrationMap->attach($object, $instance);
                     break;
             }
             $this->invalidateCacheFor($instance->getClass());
@@ -360,10 +358,10 @@ class Doctrine extends Driver implements DriverInterface
         })->then(array($this, 'buildCollection'));
     }
 
-    public function getObject($class, $oid)
+    public function getObject($class, $oid, $instance = null)
     {
         if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
-            $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid){
+            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid) {
                 return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
                     $tableNames = $this->tablesFor($class);
                     $tableName = $this->link->quoteIdentifier(array_shift($tableNames));

@@ -159,6 +159,7 @@ class LDAP extends Driver implements DriverInterface
             default:
                 throw new Exception('Object instance cannot be stored');
         }
+        
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 return $this->denormalize($instance->getProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
@@ -170,7 +171,6 @@ class LDAP extends Driver implements DriverInterface
                         throw new Exception(ldap_error($this->link));
                     }
                     $this->invalidateCacheFor($instance->getClass());
-                    $instance->setObject($object);
                     $instance->setState(Instance::STATE_MANAGED);
                     $this->hydrationMap->attach($object, $instance);
                     return $object;
@@ -183,7 +183,6 @@ class LDAP extends Driver implements DriverInterface
                         throw new Exception(ldap_error($this->link));
                     }
                     $this->invalidateCacheFor($instance->getClass());
-                    $instance->setObject($object);
                     return $object;
                 });
         }

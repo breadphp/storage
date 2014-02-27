@@ -26,7 +26,7 @@ class Instance
         } elseif (is_string($objectOrClassName)) {
             $this->className = $objectOrClassName;
             $this->reflector = new ReflectionClass($this->className);
-            $this->setObject($this->reflector->newInstanceWithoutConstructor(), false);
+            $this->setObject($this->reflector->newInstanceWithoutConstructor());
         }
         $this->oid = $oid;
         $this->state = $state;
@@ -47,9 +47,9 @@ class Instance
         return $this->object;
     }
     
-    public function setObject($object, $clone = true)
+    public function setObject($object)
     {
-        $this->object = $clone ? clone $object : $object;
+        $this->object = $object;
         $this->originalProperties = array_map(function ($value) {
             if ($value instanceof Collection) {
                 return $value->getArrayCopy();
