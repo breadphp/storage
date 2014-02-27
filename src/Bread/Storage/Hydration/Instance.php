@@ -16,6 +16,7 @@ class Instance
     protected $object;
     protected $state;
     protected $oid;
+    protected $originalProperties = array();
     
     public function __construct($objectOrClassName, $oid, $state = self::STATE_MANAGED)
     {
@@ -108,7 +109,7 @@ class Instance
         $modifiedProperties = array();
         foreach ($this->reflector->getProperties() as $property) {
             $property->setAccessible(true);
-            $previousValue = $property->getValue($this->object);
+            $previousValue = $this->originalProperties[$property->name];
             $currentValue = $property->getValue($object);
             if ($currentValue instanceof Collection) {
                 $currentValue = $currentValue->getArrayCopy();
