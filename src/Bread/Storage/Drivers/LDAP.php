@@ -96,10 +96,11 @@ class LDAP extends Driver implements DriverInterface
     protected $base;
     protected $filter;
     protected $pla;
+    protected $params;
 
     public function __construct($uri, array $options = array())
     {
-        $params = array_merge(array(
+        $this->params = array_merge(array(
           'host' => 'localhost',
           'port' => self::DEFAULT_PORT,
           'query' => self::FILTER_ALL
@@ -108,15 +109,9 @@ class LDAP extends Driver implements DriverInterface
             'cache' => true,
             'debug' => false
         ), $options);
-        if (!$this->link = ldap_connect($params['host'], $params['port'])) {
-            throw new Exception("Cannot connect to LDAP server {$params['host']}");
-        }
-        ldap_set_option($this->link, LDAP_OPT_PROTOCOL_VERSION, 3);
-        if (isset($params['user']) && isset($params['pass'])) {
-            ldap_bind($this->link, $params['user'], $params['pass']);
-        }
-        $this->base = ltrim($params['path'], '/');
-        parse_str($params['query'], $this->filter);
+        $this->connect();
+        $this->base = ltrim($this->params['path'], '/');
+        parse_str($this->params['query'], $this->filter);
         $this->hydrationMap = new Map();
         $this->useCache = $options['cache'];
         $this->pla = new LDAP\PLA($this->link, $this->base);
@@ -126,8 +121,22 @@ class LDAP extends Driver implements DriverInterface
         ldap_close($this->link);
     }
 
+    protected function connect()
+    {
+        if (!$this->link || !@ldap_get_option($this->link, LDAP_OPT_PROTOCOL_VERSION)) {
+            if (!$this->link = ldap_connect($this->params['host'], $this->params['port'])) {
+                throw new Exception("Cannot connect to LDAP server {$this->params['host']}");
+            }
+            ldap_set_option($this->link, LDAP_OPT_PROTOCOL_VERSION, 3);
+            if (isset($this->params['user']) && isset($this->params['pass'])) {
+                ldap_bind($this->link, $this->params['user'], $this->params['pass']);
+            }
+        }
+    }
+
     public function store($object, $oid = null)
     {
+        $this->connect();
         $instance = $this->hydrationMap->getInstance($object);
         $class = $instance->getClass();
         if (Configuration::get($class, 'storage.options.readonly')) {
@@ -159,7 +168,7 @@ class LDAP extends Driver implements DriverInterface
             default:
                 throw new Exception('Object instance cannot be stored');
         }
-        
+
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 return $this->denormalize($instance->getProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
@@ -190,6 +199,7 @@ class LDAP extends Driver implements DriverInterface
 
     public function delete($object)
     {
+        $this->connect();
         $instance = $this->hydrationMap->getInstance($object);
         switch ($instance->getState()) {
           case Instance::STATE_NEW:
@@ -256,6 +266,7 @@ class LDAP extends Driver implements DriverInterface
         if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
             $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid) {
                 return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+                    $this->connect();
                     $read = ldap_read($this->link, $oid, self::FILTER_ALL);
                     $entry = ldap_first_entry($this->link, $read);
                     $values = $this->getAttributes($entry, $class);
@@ -296,6 +307,7 @@ class LDAP extends Driver implements DriverInterface
 
     protected function applyOptions($class, array $search = array(), array $options = array())
     {
+        $this->connect();
         $filter = array_merge($this->filter, array(
             'objectClass' => array('$all' => Configuration::get($class, 'storage.options.objectClass')
         )));
