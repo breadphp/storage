@@ -42,6 +42,10 @@ class Doctrine extends Driver implements DriverInterface
 
     protected $cache;
 
+    protected $params;
+
+    protected $options;
+
     // TODO Move to configuration?
     protected static $typesMap = array(
         'boolean' => Type::BOOLEAN,
@@ -60,63 +64,63 @@ class Doctrine extends Driver implements DriverInterface
 
     public function __construct($uri, array $options = array())
     {
-        $options = array_merge(array(
-            'cache' => true,
+        $this->options = array_merge(array(
+            'cache' => false,
             'debug' => false,
             'charset' => 'utf8'
         ), $options);
         $scheme = parse_url($uri, PHP_URL_SCHEME);
         switch ($scheme) {
             case 'sqlite':
-                $params = array(
+                $this->params = array(
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'path' => parse_url($uri, PHP_URL_PATH),
-                    'charset' => $options['charset'],
+                    'charset' => $this->options['charset'],
                     'driver' => 'pdo_sqlite'
                 );
                 break;
             case 'mysql':
-                $params = array(
+                $this->params = array(
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'charset' => $options['charset'],
+                    'charset' => $this->options['charset'],
                     'driver' => 'pdo_mysql'
                 );
                 break;
             case 'pgsql':
-                $params = array(
+                $this->params = array(
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'charset' => $options['charset'],
+                    'charset' => $this->options['charset'],
                     'driver' => 'pdo_pgsql'
                 );
                 break;
             case 'sqlsrv':
-                $params = array(
+                $this->params = array(
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'charset' => $options['charset'],
+                    'charset' => $this->options['charset'],
                     'driver' => 'pdo_sqlsrv'
                 );
                 break;
             case 'db2':
-                $params = array(
+                $this->params = array(
                     'user' => parse_url($uri, PHP_URL_USER),
                     'password' => parse_url($uri, PHP_URL_PASS),
                     'host' => parse_url($uri, PHP_URL_HOST),
                     'port' => parse_url($uri, PHP_URL_PORT),
                     'dbname' => ltrim(parse_url($uri, PHP_URL_PATH), '/'),
-                    'charset' => $options['charset'],
+                    'charset' => $this->options['charset'],
                     //'driver' => 'pdo_ibm'
                     'driverClass' => 'Bread\Storage\Drivers\Doctrine\DB2v5r1Driver'
                 );
@@ -124,20 +128,28 @@ class Doctrine extends Driver implements DriverInterface
             default:
                 throw new Exception(sprintf('Scheme %s not supported by %s driver', $scheme, __CLASS__));
         }
-        $this->link = DriverManager::getConnection($params);
-        $config = $this->link->getConfiguration();
-        if ($options['debug']) {
-            $config->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
-        }
-        $this->useCache = $options['cache'];
-        $this->schemaManager = $this->link->getSchemaManager();
         $this->hydrationMap = new Map();
-        $this->registerTypes();
         $this->cache = new ArrayCache(); //new FilesystemCache(sys_get_temp_dir());
+        $this->useCache = $this->options['cache'];
+        $this->connect();
+        $this->registerTypes();
+    }
+
+    protected function connect()
+    {
+        if (!$this->link || !$this->link->isConnected()) {
+            $this->link = DriverManager::getConnection($this->params);
+            $config = $this->link->getConfiguration();
+            if ($this->options['debug']) {
+                $config->setSQLLogger(new \Doctrine\DBAL\Logging\EchoSQLLogger());
+            }
+            $this->schemaManager = $this->link->getSchemaManager();
+        }
     }
 
     public function store($object, $oid = null)
     {
+        $this->connect();
         $instance = $this->hydrationMap->getInstance($object);
         $class = $instance->getClass();
         switch ($instance->getState()) {
@@ -289,25 +301,26 @@ class Doctrine extends Driver implements DriverInterface
 
     public function delete($object)
     {
-      $instance = $this->hydrationMap->getInstance($object);
-      $class = get_class($object);
-      $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
-      switch ($instance->getState()) {
-        case Instance::STATE_NEW:
-            $instance->setState(Instance::STATE_DELETED);
-            // fallback to next case
-        case Instance::STATE_DELETED:
-            break;
-        case Instance::STATE_MANAGED:
-            $oid = $instance->getObjectId();
-            $tableNames = $this->tablesFor($class);
-            $this->deleteCascade($object);
-            $this->link->delete(array_shift($tableNames), array($objectIdFieldName => $oid));
-            $instance->setState(Instance::STATE_DELETED);
-            $this->invalidateCacheFor($class);
-            break;
-      }
-      return When::resolve($object);
+        $this->connect();
+        $instance = $this->hydrationMap->getInstance($object);
+        $class = get_class($object);
+        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+        switch ($instance->getState()) {
+            case Instance::STATE_NEW:
+                $instance->setState(Instance::STATE_DELETED);
+                // fallback to next case
+            case Instance::STATE_DELETED:
+                break;
+            case Instance::STATE_MANAGED:
+                $oid = $instance->getObjectId();
+                $tableNames = $this->tablesFor($class);
+                $this->deleteCascade($object);
+                $this->link->delete(array_shift($tableNames), array($objectIdFieldName => $oid));
+                $instance->setState(Instance::STATE_DELETED);
+                $this->invalidateCacheFor($class);
+                break;
+        }
+        return When::resolve($object);
     }
 
     public function count($class, array $search = array(), array $options = array())
@@ -346,9 +359,9 @@ class Doctrine extends Driver implements DriverInterface
     public function fetch($class, array $search = array(), array $options = array())
     {
         return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
-            return $this->select($class, $search, $options)->then(function ($result) {
+            return $this->select($class, $search, $options)->then(function ($result) use($class){
                 return $result->fetchAll(PDO::FETCH_COLUMN, 0);
-            })->then(function ($oids) use ($cacheKey) {
+            })->then(function ($oids) use ($cacheKey, $class) {
                 return $this->storeToCache($cacheKey, $oids);
             });
         })->then(function ($oids) use ($class) {
@@ -368,7 +381,6 @@ class Doctrine extends Driver implements DriverInterface
                     $tableAlias = $this->link->quoteIdentifier('t');
                     $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
                     $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
-
                     $propertiesQueryBuilder = $this->link->createQueryBuilder();
                     $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
                         ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
@@ -382,6 +394,7 @@ class Doctrine extends Driver implements DriverInterface
                             ->execute()->fetchAll(PDO::FETCH_COLUMN);
                     }
                     if ($values === false) {
+                        var_dump(sprintf("Object %s (%s) does not exist.", $oid, $class));
                         throw new Exception(sprintf("Object %s (%s) does not exist.", $oid, $class));
                     }
                     return $this->storePropertiesToCache($cacheKey, $values);
@@ -398,6 +411,7 @@ class Doctrine extends Driver implements DriverInterface
 
     protected function select($class, array $search = array(), array $options = array())
     {
+        $this->connect();
         $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
         $queryBuilder = $this->link->createQueryBuilder();
         $tableNames = $this->tablesFor($class);
@@ -583,18 +597,25 @@ class Doctrine extends Driver implements DriverInterface
                 switch ((string) $k) {
                     case '$in':
                         return $this->denormalizeValue($v, $property, $class)->then(function ($v) use ($queryBuilder, $property) {
-                            $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), $v);
-                            $field = $this->link->quoteIdentifier($property);
-                            return "$field IN (" . implode(',', $placeholders) . ")";
-                            return $this->link->getDatabasePlatform()->getInExpression($field, $placeholders);
+                            if ($v) {
+                                $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), $v);
+                                $field = $this->link->quoteIdentifier($property);
+                                return "$field IN (" . implode(',', $placeholders) . ")";
+                                return $this->link->getDatabasePlatform()->getInExpression($field, $placeholders);
+                            }
+                            return $queryBuilder->expr()->eq(0, 1);
                         });
                     case '$nin':
                         return $this->denormalizeValue($v, $property, $class)->then(function ($v) use ($queryBuilder, $property) {
-                            $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), $v);
-                            $field = $this->link->quoteIdentifier($property);
-                            return $this->link->getDatabasePlatform()->getNotExpression(
-                                $this->link->getDatabasePlatform()->getInExpression($field, $placeholders)
-                            );
+                            if ($v) {
+                                $placeholders = array_map(array($queryBuilder, 'createNamedParameter'), $v);
+                                $field = $this->link->quoteIdentifier($property);
+                                return "$field NOT IN (" . implode(',', $placeholders) . ")";
+                                return $this->link->getDatabasePlatform()->getNotExpression(
+                                    $this->link->getDatabasePlatform()->getInExpression($field, $placeholders)
+                                );
+                            }
+                            return $queryBuilder->expr()->eq(0, 1);
                         });
                     case '$lt':
                         $function = 'lt';
@@ -648,18 +669,21 @@ class Doctrine extends Driver implements DriverInterface
                         });
                     case '$all':
                         return $this->denormalizeValue($v, $property, $class)->then(function ($value) use ($queryBuilder, $property) {
-                            $field = $this->link->quoteIdentifier($property);
-                            $all = array_map(function ($value) use ($queryBuilder, $field) {
-                                $subQueryBuilder = $this->link->createQueryBuilder();
-                                $subQueryBuilder
-                                    ->add('select', $queryBuilder->getQueryPart('select'))
-                                    ->add('from', $queryBuilder->getQueryPart('from'))
-                                    ->add('join', $queryBuilder->getQueryPart('join'))
-                                    ->where($queryBuilder->expr()->eq($field, $queryBuilder->createNamedParameter($value)));
-                                // TODO vvvvv -> guess alias and identifier
-                                return 't._id IN (' . $subQueryBuilder->getSQL() . ')';
-                            }, $value);
-                            return implode(' AND ', $all);
+                            if ($value) {
+                                $field = $this->link->quoteIdentifier($property);
+                                $all = array_map(function ($value) use ($queryBuilder, $field) {
+                                    $subQueryBuilder = $this->link->createQueryBuilder();
+                                    $subQueryBuilder
+                                        ->add('select', $queryBuilder->getQueryPart('select'))
+                                        ->add('from', $queryBuilder->getQueryPart('from'))
+                                        ->add('join', $queryBuilder->getQueryPart('join'))
+                                        ->where($queryBuilder->expr()->eq($field, $queryBuilder->createNamedParameter($value)));
+                                    // TODO vvvvv -> guess alias and identifier
+                                    return 't._id IN (' . $subQueryBuilder->getSQL() . ')';
+                                }, $value);
+                                return implode(' AND ', $all);
+                            }
+                            return $queryBuilder->expr()->eq(0, 1);
                         });
                     case '$not':
                         $not = array(
