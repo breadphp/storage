@@ -137,7 +137,7 @@ class Doctrine extends Driver implements DriverInterface
 
     protected function connect()
     {
-        if (!$this->link || !$this->link->isConnected()) {
+        if (!$this->link || !$this->link->ping()) {
             $this->link = DriverManager::getConnection($this->params);
             $config = $this->link->getConfiguration();
             if ($this->options['debug']) {

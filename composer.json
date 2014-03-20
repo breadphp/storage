@@ -17,13 +17,11 @@
 		"odm"
 	],
 	"homepage" : "https://github.com/breadphp/storage",
-	"license" : [
-		"CC-BY-3.0"
-	],
+	"license" : "CC-BY-3.0",
 	"require" : {
 		"bread/caching" : "~1.0",
 		"bread/types" : "~0.1",
-		"doctrine/dbal" : "~2.0",
+		"doctrine/dbal" : "~2.0@dev",
 		"php" : ">=5.5",
 		"bread/configuration" : "~1.0",
 		"bread/promises" : "~1.0"
