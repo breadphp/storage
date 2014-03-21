@@ -31,9 +31,9 @@
 		"bread/tests" : "~0.1"
 	},
 	"autoload" : {
-		"psr-0" : {
-			"Bread\\Storage" : "src",
-			"Bread\\Tests\\Storage" : "tests"
+		"psr-4" : {
+			"Bread\\Storage\\" : "src",
+			"Bread\\Tests\\Storage\\" : "tests"
 		}
 	}
 }
