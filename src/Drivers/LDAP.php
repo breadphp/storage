@@ -231,7 +231,7 @@ class LDAP extends Driver implements DriverInterface
     {
         $options['limit'] = 1;
         return $this->fetch($class, $search, $options)->then(function ($results) {
-            return current($results) ? : When::reject();
+            return current($results) ? : When::reject(new Exception('Model not found.'));
         });
     }
 
