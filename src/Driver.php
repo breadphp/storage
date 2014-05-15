@@ -12,6 +12,7 @@ use Bread\Storage\Exceptions\DriverNotRegistered;
 
 abstract class Driver
 {
+    protected $domain;
     protected $hydrationMap;
     protected $useCache = true;
 
@@ -39,7 +40,7 @@ abstract class Driver
     protected function deleteCascade($object)
     {
         $class = get_class($object);
-        foreach (Configuration::get($class, 'properties') as $property => $options) {
+        foreach (Configuration::get($class, 'properties', $this->domain) as $property => $options) {
             if (isset($options['cascade']) && $options['cascade']) {
                 if ($object->$property instanceof Traversable || is_array($object->$property)) {
                     $cascade = $object->$property;
@@ -66,7 +67,7 @@ abstract class Driver
         $reflector = new ReflectionClass($class);
         $promises = array();
         foreach ($properties as $name => $value) {
-            if (Configuration::get($class, "properties.$name.multiple")) {
+            if (Configuration::get($class, "properties.$name.multiple", $this->domain)) {
                 $promises[$name] = When::all(array_map(function ($value) use ($name, $class) {
                     return $this->normalizeValue($name, $value, $class);
                 }, $value))->then(function ($array) {

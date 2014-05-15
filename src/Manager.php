@@ -23,35 +23,35 @@ class Manager
 
     protected static $drivers = array();
     protected static $mapping = array();
-    
-    public static function register($driver, $class, $options = array())
+
+    public static function register($driver, $class, $options = array(), $domain = '__default__')
     {
         if (is_string($driver)) {
-            if (!isset(static::$drivers[$driver])) {
-                static::$drivers[$driver] = static::factory($driver, $options);
+            if (!isset(static::$drivers["{$driver}@{$domain}"])) {
+                static::$drivers["{$driver}@{$domain}"] = static::factory($driver, $options, $domain);
             }
-            static::$mapping[$class] = static::$drivers[$driver];
+            static::$mapping["{$class}@{$domain}"] = static::$drivers["{$driver}@{$domain}"];
         } else {
-            static::$mapping[$class] = $driver;
+            static::$mapping["{$class}@{$domain}"] = $driver;
         }
-        return static::$mapping[$class];
+        return static::$mapping["{$class}@{$domain}"];
     }
 
-    public static function driver($class)
+    public static function driver($class, $domain = '__default__')
     {
         $classes = class_parents($class);
         array_unshift($classes, $class);
         foreach ($classes as $c) {
-            if (isset(static::$mapping[$c])) {
-                return static::$mapping[$c];
-            } elseif ($url = Configuration::get($c, 'storage.url')) {
-                return static::register($url, $c, (array) Configuration::get($c, 'storage.options'));
+            if (isset(static::$mapping["{$c}@{$domain}"])) {
+                return static::$mapping["{$c}@{$domain}"];
+            } elseif ($url = Configuration::get($c, 'storage.url', $domain)) {
+                return static::register($url, $c, (array) Configuration::get($c, 'storage.options', $domain), $domain);
             }
         }
         throw new Exceptions\DriverNotRegistered($class);
     }
 
-    public static function factory($url, $options = array())
+    public static function factory($url, $options = array(), $domain = '__default__')
     {
         $scheme = parse_url($url, PHP_URL_SCHEME);
         if (!$Driver = Configuration::get(__CLASS__, "drivers.$scheme")) {
@@ -60,7 +60,7 @@ class Manager
         if (!is_subclass_of($Driver, 'Bread\Storage\Interfaces\Driver')) {
             throw new Exception("{$Driver} isn't a valid driver.");
         }
-        return new $Driver($url, $options);
+        return new $Driver($url, $options, $domain);
     }
 }
 

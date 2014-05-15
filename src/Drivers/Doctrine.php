@@ -62,13 +62,14 @@ class Doctrine extends Driver implements DriverInterface
         'Bread\Types\DateInterval' => Type::INTEGER
     );
 
-    public function __construct($uri, array $options = array())
+    public function __construct($uri, array $options = array(), $domain = '__default__')
     {
         $this->options = array_merge(array(
             'cache' => false,
             'debug' => false,
             'charset' => 'utf8'
         ), $options);
+        $this->domain = $domain;
         $scheme = parse_url($uri, PHP_URL_SCHEME);
         switch ($scheme) {
             case 'sqlite':
@@ -165,7 +166,7 @@ class Doctrine extends Driver implements DriverInterface
         }
         $this->link->beginTransaction();
         return $this->denormalize($instance->getModifiedProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
-            $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+            $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
             $objectIdFieldIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
             $tables = $this->tablesFor($class);
             foreach ($tables as $tableName) {
@@ -185,8 +186,8 @@ class Doctrine extends Driver implements DriverInterface
                         $types[$placeholder] = Type::getType(Type::BLOB)->getBindingType();
                     }
                 }
-                $isMultiple = $propertyName ? Configuration::get($class, "properties.$propertyName.multiple") : false;
-                $isTaggable = $propertyName ? Configuration::get($class, "properties.$propertyName.taggable") : false;
+                $isMultiple = $propertyName ? Configuration::get($class, "properties.$propertyName.multiple", $this->domain) : false;
+                $isTaggable = $propertyName ? Configuration::get($class, "properties.$propertyName.taggable", $this->domain) : false;
                 switch ($instance->getState()) {
                   case Instance::STATE_NEW:
                       if ($isMultiple) {
@@ -209,8 +210,8 @@ class Doctrine extends Driver implements DriverInterface
                           $placeholders[$objectIdFieldName] = $oid;
                           $this->link->insert($tableName, $placeholders, $types);
                           // TODO replace strategy with computed attributes outside storage
-                          foreach ((array) Configuration::get($class, "properties") as $property => $options) {
-                              switch (Configuration::get($class, "properties.$property.strategy")) {
+                          foreach ((array) Configuration::get($class, "properties", $this->domain) as $property => $options) {
+                              switch (Configuration::get($class, "properties.$property.strategy", $this->domain)) {
                                 case 'autoincrement':
                                     $instance->setProperty($object, $property, (int) $this->link->lastInsertId());
                                     break;
@@ -304,7 +305,7 @@ class Doctrine extends Driver implements DriverInterface
         $this->connect();
         $instance = $this->hydrationMap->getInstance($object);
         $class = get_class($object);
-        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+        $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 $instance->setState(Instance::STATE_DELETED);
@@ -379,7 +380,7 @@ class Doctrine extends Driver implements DriverInterface
                     $tableNames = $this->tablesFor($class);
                     $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
                     $tableAlias = $this->link->quoteIdentifier('t');
-                    $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+                    $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
                     $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
                     $propertiesQueryBuilder = $this->link->createQueryBuilder();
                     $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
@@ -412,7 +413,7 @@ class Doctrine extends Driver implements DriverInterface
     protected function select($class, array $search = array(), array $options = array())
     {
         $this->connect();
-        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+        $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
         $queryBuilder = $this->link->createQueryBuilder();
         $tableNames = $this->tablesFor($class);
         $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
@@ -463,7 +464,7 @@ class Doctrine extends Driver implements DriverInterface
             }
             return When::all($normalizedValues);
         }
-        $type = Configuration::get($class, "properties.$name.type");
+        $type = Configuration::get($class, "properties.$name.type", $this->domain);
         switch ($type) {
           default:
               if (isset(self::$typesMap[$type])) {
@@ -489,7 +490,7 @@ class Doctrine extends Driver implements DriverInterface
 
     protected function denormalizeValue($value, $field, $class)
     {
-        $type = Configuration::get($class, "properties.$field.type");
+        $type = Configuration::get($class, "properties.$field.type", $this->domain);
         if ($value instanceof Promise) {
             return $value->then(function($value) use ($field, $class) {
                 return $this->denormalizeValue($value, $field, $class)->then(null, function() {
@@ -813,12 +814,12 @@ class Doctrine extends Driver implements DriverInterface
         if ($this->cache->contains($class)) {
             return $this->cache->fetch($class);
         }
-        if (!$tableName = Configuration::get($class, "storage.options.table")) {
+        if (!$tableName = Configuration::get($class, "storage.options.table", $this->domain)) {
             if (!$tableName = $this->indexedTable($class)) {
                 $tableName = $this->indexTable($class);
             }
         }
-        $objectIdFieldName = Configuration::get($class, 'storage.options.oid') ? : self::OBJECTID_FIELD_NAME;
+        $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
         $schema = $this->schemaManager->createSchema();
         if (!$schema->hasTable($tableName)) {
             $table = $schema->createTable($tableName);
@@ -827,14 +828,14 @@ class Doctrine extends Driver implements DriverInterface
             $reflectionClass = new ReflectionClass($class);
             foreach ($reflectionClass->getProperties() as $property) {
                 $columnName = $property->name;
-                $propertyType = Configuration::get($class, "properties.$columnName.type");
-                $isRequired = Configuration::get($class, "properties.$columnName.required");
-                $isUnique = Configuration::get($class, "properties.$columnName.unique");
-                $isMultiple = Configuration::get($class, "properties.$columnName.multiple");
-                $isTaggable = Configuration::get($class, "properties.$columnName.taggable");
-                $isIndexed = Configuration::get($class, "properties.$columnName.indexed");
-                $strategy = Configuration::get($class, "properties.$columnName.strategy");
-                $default = Configuration::get($class, "properties.$columnName.default");
+                $propertyType = Configuration::get($class, "properties.$columnName.type", $this->domain);
+                $isRequired = Configuration::get($class, "properties.$columnName.required", $this->domain);
+                $isUnique = Configuration::get($class, "properties.$columnName.unique", $this->domain);
+                $isMultiple = Configuration::get($class, "properties.$columnName.multiple", $this->domain);
+                $isTaggable = Configuration::get($class, "properties.$columnName.taggable", $this->domain);
+                $isIndexed = Configuration::get($class, "properties.$columnName.indexed", $this->domain);
+                $strategy = Configuration::get($class, "properties.$columnName.strategy", $this->domain);
+                $default = Configuration::get($class, "properties.$columnName.default", $this->domain);
                 $columnType = $this->mapColumnType($propertyType);
                 if ($isMultiple) {
                     $multiplePropertyTableName = $this->getMultiplePropertyTableName($tableName, $columnName);
@@ -875,7 +876,7 @@ class Doctrine extends Driver implements DriverInterface
                     }
                 }
             }
-            if ($uniques = Configuration::get($class, "uniques")) {
+            if ($uniques = Configuration::get($class, "uniques", $this->domain)) {
                 $table->addUniqueIndex($uniques);
             }
             $table->addColumn($objectIdFieldName, self::OBJECTID_FIELD_TYPE);
