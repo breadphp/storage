@@ -9,7 +9,7 @@ class AttributeType extends SchemaItem
 
     const TYPE_DN = '1.3.6.1.4.1.1466.115.121.1.12';
     const TYPE_GENERALIZED_TIME = '1.3.6.1.4.1.1466.115.121.1.24';
-    const FORMAT_GENERALIZED_TIME = 'YmdHisZ';
+    const FORMAT_GENERALIZED_TIME = 'YmdHis\Z';
     /**
      * The schema item's name.
      */

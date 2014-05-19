@@ -97,6 +97,12 @@ class LDAP extends Driver implements DriverInterface
     protected $filter;
     protected $pla;
     protected $params;
+    protected $sortFlags = array(
+        'integer' => SORT_NUMERIC,
+        'float' => SORT_NUMERIC,
+        'string' => 10,
+        'text' => SORT_FLAG_CASE
+    );
 
     public function __construct($uri, array $options = array(), $domain = '__default__')
     {
@@ -147,15 +153,17 @@ class LDAP extends Driver implements DriverInterface
             case Instance::STATE_NEW:
                 foreach ((array) Configuration::get($class, 'properties', $this->domain) as $property => $options) {
                     foreach ((array) Configuration::get($class, "properties.$property.strategy", $this->domain) as $strategy => $callback) {
-                        switch ($strategy) {
-                            case 'autoincrement':
-                                if ($callback && is_null($object->$property)) {
-                                    $autoincrement = (int) $this->autoincrement($class);
-                                    if (is_callable($callback)) {
-                                        $value = call_user_func($callback, $autoincrement);
+                        if(!$value = $object->$property) {
+                            switch ($strategy) {
+                                case 'autoincrement':
+                                    if ($callback && is_null($object->$property)) {
+                                        $autoincrement = (int) $this->autoincrement($class);
+                                        if (is_callable($callback)) {
+                                            $value = call_user_func($callback, $autoincrement);
+                                        }
                                     }
-                                }
-                                break;
+                                    break;
+                            }
                         }
                         $instance->setProperty($object, $property, $value);
                     }
@@ -169,7 +177,6 @@ class LDAP extends Driver implements DriverInterface
             default:
                 throw new Exception('Object instance cannot be stored');
         }
-
         switch ($instance->getState()) {
             case Instance::STATE_NEW:
                 return $this->denormalize($instance->getProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
@@ -182,8 +189,7 @@ class LDAP extends Driver implements DriverInterface
                     }
                     $this->invalidateCacheFor($instance->getClass());
                     $instance->setState(Instance::STATE_MANAGED);
-                    $this->hydrationMap->attach($object, $instance);
-                    return $object;
+                    return $this->getObject($class, $oid, $instance);
                 });
             case Instance::STATE_MANAGED:
                 return $this->denormalize($instance->getModifiedProperties($object), $class)->then(function ($properties) use ($instance, $object, $oid, $class) {
@@ -193,9 +199,10 @@ class LDAP extends Driver implements DriverInterface
                         throw new Exception(ldap_error($this->link));
                     }
                     $this->invalidateCacheFor($instance->getClass());
-                    return $object;
+                    return $this->getObject($class, $oid, $instance);
                 });
         }
+
     }
 
     public function delete($object)
@@ -223,8 +230,11 @@ class LDAP extends Driver implements DriverInterface
 
     public function count($class, array $search = array(), array $options = array())
     {
-        return $this->applyOptions($class, $search, $options)->then(function ($search) {
-            return ldap_count_entries($this->link, $search);
+        return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
+            if (!$entry = ldap_first_entry($this->link, $search)) {
+                return 0;
+            }
+            return count($this->applyOptions($class, $entry, $options));
         });
     }
 
@@ -240,43 +250,15 @@ class LDAP extends Driver implements DriverInterface
     {
         // TODO Cache $oids
         //return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
-            return $this->applyOptions($class, $search, $options)->then(function ($search) use ($class, $options) {
+            return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return $promises;
                 }
-                $skip = 0;
-                $results = array();
-                do {
-                    $results[ldap_get_dn($this->link, $entry)] = $this->getAttributes($entry, $class);
-//                     if (!isset($options['skip']) || ++$skip > $options['skip']) {
-//                         $oid = ldap_get_dn($this->link, $entry);
-//                         if ($object = $this->hydrationMap->objectExists($class, $oid)) {
-//                             $promises[$oid] = When::resolve($object);
-//                         } else {
-//                             $promises[$oid] = $this->createObjectPlaceholder($class, $oid)->then(function($object) use ($entry, $class, $oid){
-//                                 return $this->getEntry($object, $entry, $class, $oid);
-//                             });
-//                         }
-//                     }
-                } while ($entry = ldap_next_entry($this->link, $entry));
-                $previousKeys = array();
-                if (isset($options['sort'])) {
-                    $mutisort = array();
-                    foreach($results as $k=>$v) {
-                        foreach ($options['sort'] as $attribute => $order) {
-                            $sort[$attribute][$k] = isset($v[$attribute]) ? $v[$attribute] : null;
-                        }
-                    }
-                    foreach ($options['sort'] as $attribute => $order) {
-                        $mutisort[] = $sort[$attribute];
-                        $mutisort[] = $order > 0 ? SORT_ASC : SORT_DESC;
-                    }
-                    $mutisort[] = &$results;
-                    call_user_func_array('array_multisort', $mutisort);
-                }
-                foreach($results as $oid => $attributes) {
-                    if (!isset($options['skip']) || ++$skip > $options['skip']) {
+                foreach($this->applyOptions($class, $entry, $options) as $oid=>$attributes) {
+                    if ($object = $this->hydrationMap->objectExists($class, $oid)) {
+                        $promises[$oid] = When::resolve($object);
+                    } else {
                         $promises[$oid] = $this->createObjectPlaceholder($class, $oid)->then(function($object) use ($attributes, $class, $oid) {
                             return $this->hydrateObject($object, $attributes, $class, $oid);
                         });
@@ -289,13 +271,17 @@ class LDAP extends Driver implements DriverInterface
         })->then(array($this, 'buildCollection'));
     }
 
-    public function getObject($class, $oid)
+    public function getObject($class, $oid, $instance = null)
     {
         if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
-            $object = $this->createObjectPlaceholder($class, $oid)->then(function ($object) use ($class, $oid) {
+            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid) {
                 return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
                     $this->connect();
-                    $read = ldap_read($this->link, $oid, self::FILTER_ALL);
+                    $attributes = $this->filterAttributes($class);
+                    $attrsonly = static::ATTRSONLY;
+                    $sizelimit = static::SIZELIMIT;
+                    $timelimit = static::TIMELIMIT;
+                    $read = ldap_read($this->link, $oid, self::FILTER_ALL, $attributes, $attrsonly, $sizelimit, $timelimit);
                     $entry = ldap_first_entry($this->link, $read);
                     $values = $this->getAttributes($entry, $class);
                     return $this->storePropertiesToCache($cacheKey, $values);
@@ -309,13 +295,8 @@ class LDAP extends Driver implements DriverInterface
 
     protected function getAttributes($entry, $class)
     {
-        $reflector = new ReflectionClass($class);
         if ($attributes = ldap_get_attributes($this->link, $entry)) {
-            $properties = array();
-            foreach ($reflector->getProperties() as $property) {
-                $properties[$property->name] = true;
-            }
-            if ($attributes = $this->normalizeAttributes(array_intersect_key($attributes, $properties), $class)) {
+            if ($attributes = $this->normalizeAttributes($attributes, $class)) {
                 return $attributes;
             }
         }
@@ -333,29 +314,21 @@ class LDAP extends Driver implements DriverInterface
     public function purge($class, array $search = array(), array $options = array())
     {}
 
-    protected function applyOptions($class, array $search = array(), array $options = array())
+    protected function search($class, array $search = array(), array $options = array())
     {
         $this->connect();
         $filter = array_merge($this->filter, array(
             'objectClass' => array('$all' => Configuration::get($class, 'storage.options.objectClass', $this->domain)
         )));
         return $this->denormalizeSearch($class, array($filter, $search))->then(function ($filter) use ($class, $options) {
-            $reflector = new ReflectionClass($class);
-            $attributes = array();
-            foreach ($reflector->getProperties() as $property) {
-                $attributes[] = $property->name;
-            }
+            $attributes = $this->filterAttributes($class);
             $attrsonly = static::ATTRSONLY;
-            $sizelimit = isset($options['limit']) ? $options['limit'] : static::SIZELIMIT;
+            $sizelimit = static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
             $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
             foreach ($options as $option => $value) {
                 switch ($option) {
                   case 'sort':
-                      foreach ($value as $attribute => $order) {
-                          ldap_sort($this->link, $search, $attribute);
-                      }
-                      break;
                   case 'limit':
                   case 'skip':
                       break;
@@ -365,6 +338,47 @@ class LDAP extends Driver implements DriverInterface
             }
             return $search;
         });
+    }
+
+    protected function filterAttributes($class)
+    {
+        $reflector = new ReflectionClass($class);
+        $attributes = array();
+        foreach ($reflector->getProperties() as $property) {
+            $attributes[] = $property->name;
+        }
+        return $attributes;
+    }
+
+    protected function applyOptions($class, $entry, array $options = array())
+    {
+        $results = array();
+        $promises = array();
+        do {
+            $results[ldap_get_dn($this->link, $entry)] = $this->getAttributes($entry, $class);
+        } while ($entry = ldap_next_entry($this->link, $entry));
+        if (isset($options['sort'])) {
+            $multisort = array();
+            foreach($results as $k=>$v) {
+                foreach ($options['sort'] as $attribute => $order) {
+                    $sort[$attribute][$k] = isset($v[$attribute]) ? $v[$attribute] : null;
+                }
+            }
+            foreach ($options['sort'] as $attribute => $order) {
+                $multisort[] = $sort[$attribute];
+                $multisort[] = $order > 0 ? SORT_ASC : SORT_DESC;
+                $multisort[] = isset($this->sortFlags[Configuration::get($class, "properties.$attribute.type", $this->domain)]) ? $this->sortFlags[Configuration::get($class, "properties.$attribute.type", $this->domain)] : SORT_REGULAR;
+            }
+            $multisort[] = &$results;
+            call_user_func_array('array_multisort', $multisort);
+        }
+        $indexes = array_keys($results);
+        $skip = isset($options['skip']) ? $options['skip'] : 0;
+        $limit = isset($options['limit']) ? $options['limit'] : count($results);
+        foreach(array_slice($indexes, $skip, $limit) as $oid) {
+            $promises[$oid] = $results[$oid];
+        }
+        return $promises;
     }
 
     protected function normalizeAttributes(array $attributes, $class)
@@ -449,7 +463,15 @@ class LDAP extends Driver implements DriverInterface
         } elseif (is_object($value)) {
             $type = Configuration::get($class, "properties.$field.type", $this->domain);
             if ($value instanceof DateTime) {
-                return When::resolve($value->format(self::DATETIME_FORMAT));
+                $attributeType = $this->pla->getSchemaAttribute($field);
+                switch ($attributeType->getSyntax()) {
+                    case AttributeType::TYPE_GENERALIZED_TIME:
+                        $dateTimeFormat = AttributeType::FORMAT_GENERALIZED_TIME;
+                        break;
+                    default:
+                        $dateTimeFormat = self::DATETIME_FORMAT;
+                }
+                return When::resolve($value->format($dateTimeFormat));
             } else {
                 $driver = Manager::driver(get_class($value));
                 return $driver->store($value)->then(function($object) use ($driver, $field) {

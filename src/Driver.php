@@ -87,7 +87,7 @@ abstract class Driver
                 $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
-            //$this->hydrationMap->attach($object, new Instance($object, $oid, Instance::STATE_MANAGED));
+            $this->hydrationMap->getInstance($object)->setObject($object);
             return $object;
         });
     }

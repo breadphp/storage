@@ -10,14 +10,14 @@ class Instance
     const STATE_NEW = 0;
     const STATE_MANAGED = 1;
     const STATE_DELETED = 2;
-    
+
     protected $className;
     protected $reflector;
     protected $object;
     protected $state;
     protected $oid;
     protected $originalObject;
-    
+
     public function __construct($objectOrClassName, $oid, $state = self::STATE_MANAGED)
     {
         if (is_object($objectOrClassName)) {
@@ -32,52 +32,52 @@ class Instance
         $this->oid = $oid;
         $this->state = $state;
     }
-    
+
     public function getReflector()
     {
         return $this->reflector;
     }
-    
+
     public function getClass()
     {
         return $this->className;
     }
-    
+
     public function getObject()
     {
         return $this->object;
     }
-    
+
     public function setObject($object)
     {
         $this->object = $object;
         $this->originalObject = clone $object;
     }
-    
+
     public function getProperty($object, $name)
     {
         $property = $this->reflector->getProperty($name);
         $property->setAccessible(true);
         return $property->getValue($object);
     }
-    
+
     public function setProperty($object, $name, $value)
     {
         $property = $this->reflector->getProperty($name);
         $property->setAccessible(true);
         $property->setValue($object, $value);
     }
-    
+
     public function getObjectId()
     {
         return $this->oid;
     }
-    
+
     public function setObjectId($oid)
     {
         $this->oid = $oid;
     }
-    
+
     public function getPropertyNames()
     {
         $propertyNames = array();
@@ -86,7 +86,7 @@ class Instance
         }
         return $propertyNames;
     }
-    
+
     public function getProperties($object)
     {
         $properties = array();
@@ -96,7 +96,7 @@ class Instance
         }
         return $properties;
     }
-    
+
     public function getModifiedProperties($object)
     {
         if ($this->state === self::STATE_NEW) {
@@ -116,7 +116,7 @@ class Instance
         }
         return $modifiedProperties;
     }
-    
+
     public function setProperties(array $properties) {
         foreach ($properties as $name => $value) {
             $property = $this->reflector->getProperty($name);
@@ -124,12 +124,12 @@ class Instance
             $property->setValue($this->object, $value);
         }
     }
-    
+
     public function getState()
     {
         return $this->state;
     }
-    
+
     public function setState($state)
     {
         $this->state = $state;
