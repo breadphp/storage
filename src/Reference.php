@@ -27,18 +27,18 @@ class Reference implements JsonSerializable
 
     public $_id;
 
-    public function __construct($object)
+    public function __construct($object, $domain = '__default__')
     {
         $class = get_class($object);
         $this->_ref = $class;
-        $this->_id = Manager::driver($class)->getObjectId($object);
+        $this->_id = Manager::driver($class, $domain)->getObjectId($object);
     }
 
     public function __toString()
     {
         return json_encode($this);
     }
-    
+
     public function jsonSerialize() {
         return $this;
     }
@@ -54,7 +54,7 @@ class Reference implements JsonSerializable
         }
         return $reference;
     }
-    
+
     public static function is($reference, $class = null)
     {
         if ($reference instanceof Reference) {
@@ -70,7 +70,7 @@ class Reference implements JsonSerializable
         return false;
     }
 
-    public static function fetch($reference)
+    public static function fetch($reference, $domain = '__default__')
     {
         if (!static::is($reference)) {
             throw new Exception("Not a valid reference");
@@ -79,6 +79,6 @@ class Reference implements JsonSerializable
         } elseif (is_array($reference)) {
             $reference = (object) $reference;
         }
-        return Manager::driver($reference->_ref)->getObject($reference->_ref, $reference->_id);
+        return Manager::driver($reference->_ref, $domain)->getObject($reference->_ref, $reference->_id);
     }
 }

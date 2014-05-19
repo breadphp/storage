@@ -401,7 +401,7 @@ class LDAP extends Driver implements DriverInterface
     protected function normalizeValue($name, $value, $class)
     {
         if (Reference::is($value)) {
-            return Reference::fetch($value);
+            return Reference::fetch($value, $this->domain);
         }
         $type = Configuration::get($class, "properties.$name.type", $this->domain);
         switch ($type) {
@@ -473,7 +473,7 @@ class LDAP extends Driver implements DriverInterface
                 }
                 return When::resolve($value->format($dateTimeFormat));
             } else {
-                $driver = Manager::driver(get_class($value));
+                $driver = Manager::driver(get_class($value), $this->domain);
                 return $driver->store($value)->then(function($object) use ($driver, $field) {
                     $attributeType = $this->pla->getSchemaAttribute($field);
                     switch ($attributeType->getSyntax()) {
@@ -481,7 +481,7 @@ class LDAP extends Driver implements DriverInterface
                           // TODO Enforce check on LDAP driver/same instance?
                           return $this->generateDN($object);
                       default:
-                          return (string) new Reference($object);
+                          return (string) new Reference($object, $this->domain);
                     }
                 });
             }
@@ -531,7 +531,7 @@ class LDAP extends Driver implements DriverInterface
     protected function denormalizeCondition($class, $property, $condition, $negate = false)
     {
         if ($reference = Reference::is($condition)) {
-            $condition = Reference::fetch($reference);
+            $condition = Reference::fetch($reference, $this->domain);
         } elseif (is_array($condition)) {
             foreach ($condition as $k => $v) {
                 $op = '=';

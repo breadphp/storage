@@ -455,7 +455,7 @@ class Doctrine extends Driver implements DriverInterface
     protected function normalizeValue($name, $value, $class)
     {
         if (Reference::is($value)) {
-            return Reference::fetch($value);
+            return Reference::fetch($value, $this->domain);
         }
         if (is_array($value)) {
             $normalizedValues = array();
@@ -514,16 +514,16 @@ class Doctrine extends Driver implements DriverInterface
                 return When::resolve($denormalizedValue);
             } else {
                 // TODO Consider to store $value in Reference constructor (promises?)
-                $driver = Manager::driver(get_class($value));
+                $driver = Manager::driver(get_class($value), $this->domain);
                 $hydrationMap = $driver->getHydrationMap();
                 $instance = $hydrationMap->getInstance($value);
                 switch ($instance->getState()) {
                     case Instance::STATE_NEW:
                         return $driver->store($value)->then(function($object) {
-                            return (string) new Reference($object);
+                            return (string) new Reference($object, $this->domain);
                         });
                     default:
-                        return When::resolve((string) new Reference($value));
+                        return When::resolve((string) new Reference($value, $this->domain));
                 }
             }
         } else {
@@ -591,7 +591,7 @@ class Doctrine extends Driver implements DriverInterface
     protected function denormalizeCondition($queryBuilder, $property, $condition, $class)
     {
         if ($reference = Reference::is($condition)) {
-            $condition = Reference::fetch($reference);
+            $condition = Reference::fetch($reference, $this->domain);
         } elseif (is_array($condition)) {
             foreach ($condition as $k => $v) {
                 $function = 'eq';

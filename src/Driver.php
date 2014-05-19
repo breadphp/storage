@@ -48,7 +48,7 @@ abstract class Driver
                     $cascade = array($object->$property);
                 }
                 foreach ($cascade as $c) {
-                    Manager::driver($options['type'])->delete($c);
+                    Manager::driver($options['type'], $this->domain)->delete($c);
                 }
             }
         }
