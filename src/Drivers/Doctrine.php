@@ -153,6 +153,9 @@ class Doctrine extends Driver implements DriverInterface
         $this->connect();
         $instance = $this->hydrationMap->getInstance($object);
         $class = $instance->getClass();
+        if (Configuration::get($class, 'storage.options.readonly', $this->domain)) {
+            return When::resolve($object);
+        }
         switch ($instance->getState()) {
           case Instance::STATE_NEW:
               $oid = $oid ? : $this->generateObjectId();
@@ -821,7 +824,8 @@ class Doctrine extends Driver implements DriverInterface
         }
         $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
         $schema = $this->schemaManager->createSchema();
-        if (!$schema->hasTable($tableName)) {
+        $views = $this->schemaManager->listViews();
+        if (!$schema->hasTable($tableName) && !isset($views[$tableName])) {
             $table = $schema->createTable($tableName);
             $multiplePropertyTables = array();
             $taggablePropertyTables = array();
