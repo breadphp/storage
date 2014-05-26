@@ -120,7 +120,7 @@ class LDAP extends Driver implements DriverInterface
         $this->base = ltrim($this->params['path'], '/');
         parse_str($this->params['query'], $this->filter);
         $this->hydrationMap = new Map();
-        $this->useCache = $options['cache'];
+//         $this->useCache = $options['cache'];
         $this->pla = new LDAP\PLA($this->link, $this->base);
     }
 
@@ -249,7 +249,7 @@ class LDAP extends Driver implements DriverInterface
     public function fetch($class, array $search = array(), array $options = array())
     {
         // TODO Cache $oids
-        //return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
+        return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
             return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
@@ -265,9 +265,9 @@ class LDAP extends Driver implements DriverInterface
                     }
                 }
                 return When::all($promises);
-            /*})->then(function ($objects) use ($cacheKey) {
+            })->then(function ($objects) use ($cacheKey) {
                 return $this->storeToCache($cacheKey, $objects);
-            });*/
+            });
         })->then(array($this, 'buildCollection'));
     }
 
@@ -474,14 +474,23 @@ class LDAP extends Driver implements DriverInterface
                 return When::resolve($value->format($dateTimeFormat));
             } else {
                 $driver = Manager::driver(get_class($value), $this->domain);
-                return $driver->store($value)->then(function($object) use ($driver, $field) {
+                $hydrationMap = $driver->getHydrationMap();
+                $instance = $hydrationMap->getInstance($value);
+                switch ($instance->getState()) {
+                    case Instance::STATE_NEW:
+                        $obj = $driver->store($value);
+                        break;
+                    default:
+                        $obj = When::resolve($value);
+                }
+                return $obj->then(function($object) use ($driver, $field) {
                     $attributeType = $this->pla->getSchemaAttribute($field);
                     switch ($attributeType->getSyntax()) {
-                      case AttributeType::TYPE_DN:
-                          // TODO Enforce check on LDAP driver/same instance?
-                          return $this->generateDN($object);
-                      default:
-                          return (string) new Reference($object, $this->domain);
+                        case AttributeType::TYPE_DN:
+                            // TODO Enforce check on LDAP driver/same instance?
+                            return $this->generateDN($object);
+                        default:
+                            return (string) new Reference($object, $this->domain);
                     }
                 });
             }
