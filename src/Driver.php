@@ -92,29 +92,35 @@ abstract class Driver
         });
     }
 
-    protected function fetchPropertiesFromCache($class, $oid)
+    protected function fetchPropertiesFromCache($class, $oid, $classUseCache = true)
     {
         $cacheKey = implode('::', array(
             __CLASS__,
             $class,
             $oid
         ));
+        if (!$classUseCache) {
+            return When::reject($cacheKey);
+        }
         return Cache::instance()->fetch($cacheKey);
     }
 
-    protected function storePropertiesToCache($cacheKey, $values)
+    protected function storePropertiesToCache($cacheKey, $values, $classUseCache = true)
     {
+        if (!$classUseCache) {
+            return $values;
+        }
         return Cache::instance()->store($cacheKey, $values);
     }
 
-    protected function fetchFromCache($class, array $search = array(), array $options = array())
+    protected function fetchFromCache($class, array $search = array(), array $options = array(), $classUseCache = true)
     {
         $cacheKey = implode('::', array(
             __CLASS__,
             $class,
             md5(serialize($search + $options))
         ));
-        if (!$this->useCache) {
+        if (!$this->useCache || !$classUseCache) {
             return When::reject($cacheKey);
         }
         return Cache::instance()->fetch($cacheKey);

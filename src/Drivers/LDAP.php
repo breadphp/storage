@@ -249,17 +249,20 @@ class LDAP extends Driver implements DriverInterface
     public function fetch($class, array $search = array(), array $options = array())
     {
         // TODO Cache $oids
-        return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
+        $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+        return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
             return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return $promises;
                 }
                 foreach($this->applyOptions($class, $entry, $options) as $oid=>$attributes) {
-                    if ($object = $this->hydrationMap->objectExists($class, $oid)) {
+                    $hydrate = Configuration::get($class, 'storage.options.alwaysHydrate', $this->domain);
+                    if (($object = $this->hydrationMap->objectExists($class, $oid)) && !$hydrate) {
                         $promises[$oid] = When::resolve($object);
                     } else {
-                        $promises[$oid] = $this->createObjectPlaceholder($class, $oid)->then(function($object) use ($attributes, $class, $oid) {
+                        $instance = $object ? $this->hydrationMap->getInstance($object) : null;
+                        $promises[$oid] = $this->createObjectPlaceholder($class, $oid, $instance)->then(function($object) use ($attributes, $class, $oid) {
                             return $this->hydrateObject($object, $attributes, $class, $oid);
                         });
                     }
@@ -274,8 +277,9 @@ class LDAP extends Driver implements DriverInterface
     public function getObject($class, $oid, $instance = null)
     {
         if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
-            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid) {
-                return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+            $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid, $useCache) {
+                return $this->fetchPropertiesFromCache($class, $oid, $useCache)->then(null, function ($cacheKey) use ($class, $oid, $useCache) {
                     $this->connect();
                     $attributes = $this->filterAttributes($class);
                     $attrsonly = static::ATTRSONLY;
@@ -284,7 +288,7 @@ class LDAP extends Driver implements DriverInterface
                     $read = ldap_read($this->link, $oid, self::FILTER_ALL, $attributes, $attrsonly, $sizelimit, $timelimit);
                     $entry = ldap_first_entry($this->link, $read);
                     $values = $this->getAttributes($entry, $class);
-                    return $this->storePropertiesToCache($cacheKey, $values);
+                    return $this->storePropertiesToCache($cacheKey, $values, $useCache);
                 })->then(function ($values) use ($object, $class, $oid) {
                     return $this->hydrateObject($object, $values, $class, $oid);
                 });

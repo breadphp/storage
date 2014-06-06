@@ -362,7 +362,8 @@ class Doctrine extends Driver implements DriverInterface
 
     public function fetch($class, array $search = array(), array $options = array())
     {
-        return $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options) {
+        $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+        return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
             return $this->select($class, $search, $options)->then(function ($result) use($class){
                 return $result->fetchAll(PDO::FETCH_COLUMN, 0);
             })->then(function ($oids) use ($cacheKey, $class) {
@@ -377,9 +378,11 @@ class Doctrine extends Driver implements DriverInterface
 
     public function getObject($class, $oid, $instance = null)
     {
-        if (!$object = $this->hydrationMap->objectExists($class, $oid)) {
-            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid) {
-                return $this->fetchPropertiesFromCache($class, $oid)->then(null, function ($cacheKey) use ($class, $oid) {
+        $hydrate = Configuration::get($class, 'storage.options.alwaysHydrate', $this->domain);
+        if (!($object = $this->hydrationMap->objectExists($class, $oid)) || $hydrate) {
+            $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid, $useCache) {
+                return $this->fetchPropertiesFromCache($class, $oid, $useCache)->then(null, function ($cacheKey) use ($class, $oid, $useCache) {
                     $tableNames = $this->tablesFor($class);
                     $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
                     $tableAlias = $this->link->quoteIdentifier('t');
@@ -401,7 +404,7 @@ class Doctrine extends Driver implements DriverInterface
                         var_dump(sprintf("Object %s (%s) does not exist.", $oid, $class));
                         throw new Exception(sprintf("Object %s (%s) does not exist.", $oid, $class));
                     }
-                    return $this->storePropertiesToCache($cacheKey, $values);
+                    return $this->storePropertiesToCache($cacheKey, $values, $useCache);
                 })->then(function ($values) use ($object, $class, $oid) {
                     return $this->hydrateObject($object, $values, $class, $oid);
                 });
