@@ -660,7 +660,7 @@ class LDAP extends Driver implements DriverInterface
      *
      * TODO Workaround using shell's ldapmodify delete/add operations
      */
-    protected function autoincrement($class)
+    public function autoincrement($class)
     {
         $dn = $this->getBase($class);
         $search = ldap_search($this->link, $dn, '(objectClass=breadSequence)');
