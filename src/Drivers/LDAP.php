@@ -18,6 +18,7 @@ use Bread\Storage\Exceptions\UnsupportedCondition;
 use Bread\Storage\Collection;
 use ReflectionClass;
 use DateTime;
+use DateTimeZone;
 use DateInterval;
 use Bread\Storage\Drivers\LDAP\AttributeType;
 
@@ -426,7 +427,7 @@ class LDAP extends Driver implements DriverInterface
                       $dateTimeFormat = self::DATETIME_FORMAT;
                 }
 //                 $dateTimeFormat = self::DATETIME_FORMAT;
-                return When::resolve(DateTime::createFromFormat($dateTimeFormat, $value));
+                return When::resolve(DateTime::createFromFormat($dateTimeFormat, $value, new DateTimeZone(DateTimeZone.UTC)));
             default:
                 /* FIXME Too slow */
                 $attributeType = $this->pla->getSchemaAttribute($name);
