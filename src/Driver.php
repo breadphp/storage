@@ -95,6 +95,7 @@ abstract class Driver
     protected function fetchPropertiesFromCache($class, $oid, $classUseCache = true)
     {
         $cacheKey = implode('::', array(
+            $this->domain,
             __CLASS__,
             $class,
             $oid
@@ -116,6 +117,7 @@ abstract class Driver
     protected function fetchFromCache($class, array $search = array(), array $options = array(), $classUseCache = true)
     {
         $cacheKey = implode('::', array(
+            $this->domain,
             __CLASS__,
             $class,
             md5(serialize($search + $options))
@@ -136,6 +138,7 @@ abstract class Driver
     protected function invalidateCacheFor($class)
     {
         $cacheKey = implode('::', array(
+            $this->domain,
             __CLASS__,
             $class
         ));

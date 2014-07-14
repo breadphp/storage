@@ -344,7 +344,8 @@ class Doctrine extends Driver implements DriverInterface
 
     public function each($resolver, $class, array $search = array(), array $options = array())
     {
-        $this->fetchFromCache($class, $search, $options)->then(null, function ($cacheKey) use ($class, $search, $options, $resolver) {
+        $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+        $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options, $resolver) {
             return $this->select($class, $search, $options)->then(function ($result) {
                 return $result->fetchAll(PDO::FETCH_COLUMN, 0);
             })->then(function ($oids) use ($cacheKey) {

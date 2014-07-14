@@ -231,11 +231,14 @@ class LDAP extends Driver implements DriverInterface
 
     public function count($class, array $search = array(), array $options = array())
     {
-        return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
-            if (!$entry = ldap_first_entry($this->link, $search)) {
-                return 0;
-            }
-            return count($this->applyOptions($class, $entry, $options));
+        $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+        return $this->fetchFromCache($class . __METHOD__, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
+            return $this->search($class, $search, $options)->then(function ($search) use($class, $options, $cacheKey) {
+                if (!$entry = ldap_first_entry($this->link, $search)) {
+                    return 0;
+                }
+                return $this->storeToCache($cacheKey, count($this->applyOptions($class, $entry, $options)));
+            });
         });
     }
 
@@ -249,7 +252,6 @@ class LDAP extends Driver implements DriverInterface
 
     public function fetch($class, array $search = array(), array $options = array())
     {
-        // TODO Cache $oids
         $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
         return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
             return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
