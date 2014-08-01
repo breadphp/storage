@@ -224,6 +224,7 @@ class LDAP extends Driver implements DriverInterface
               }
               $instance->setState(Instance::STATE_DELETED);
               $this->invalidateCacheFor($instance->getClass());
+              $this->hydrationMap->detach($object);
               break;
         }
         return When::resolve($object);

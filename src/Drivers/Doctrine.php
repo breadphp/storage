@@ -322,6 +322,7 @@ class Doctrine extends Driver implements DriverInterface
                 $this->link->delete(array_shift($tableNames), array($objectIdFieldName => $oid));
                 $instance->setState(Instance::STATE_DELETED);
                 $this->invalidateCacheFor($class);
+                $this->hydrationMap->detach($object);
                 break;
         }
         return When::resolve($object);
