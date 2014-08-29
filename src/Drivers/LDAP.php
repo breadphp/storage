@@ -479,6 +479,7 @@ class LDAP extends Driver implements DriverInterface
                     default:
                         $dateTimeFormat = self::DATETIME_FORMAT;
                 }
+                $value->setTimezone(new DateTimeZone('UTC'));
                 return When::resolve($value->format($dateTimeFormat));
             } else {
                 $driver = Manager::driver(get_class($value), $this->domain);
