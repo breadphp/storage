@@ -185,7 +185,9 @@ class LDAP extends Driver implements DriverInterface
                         throw new Exception("Missing 'storage.options.objectClass' option");
                     }
                     $properties['objectClass'] = $objectClass;
-                    if (!ldap_add($this->link, $oid, array_filter($properties))) {
+                    if (!ldap_add($this->link, $oid, array_filter($properties, function ($value) {
+                      return $value !== null;
+                    }))) {
                         throw new Exception(ldap_error($this->link));
                     }
                     $this->invalidateCacheFor($instance->getClass());
