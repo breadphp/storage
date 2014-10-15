@@ -416,7 +416,21 @@ class Doctrine extends Driver implements DriverInterface
     }
 
     public function purge($class, array $search = array(), array $options = array())
-    {}
+    {
+        $this->connect();
+        $queryBuilder = $this->link->createQueryBuilder();
+        $tableNames = $this->tablesFor($class);
+        $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+        $tableAlias = $this->link->quoteIdentifier('t');
+        $queryBuilder->delete($tableName, $tableAlias);
+        return $this->denormalizeSearch($queryBuilder, array($search), $class)->then(function($where) use ($queryBuilder, $options) {
+            $queryBuilder->where($where);
+            $this->applyOptions($queryBuilder, $options);
+            return $queryBuilder->execute();
+        });
+        //TODO invalid cache for class
+        //TODO foreach $obj detach hydration map
+    }
 
     protected function select($class, array $search = array(), array $options = array())
     {
