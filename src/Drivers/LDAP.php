@@ -186,7 +186,7 @@ class LDAP extends Driver implements DriverInterface
                     }
                     $properties['objectClass'] = $objectClass;
                     if (!ldap_add($this->link, $oid, array_filter($properties, function ($value) {
-                      return $value !== null && $value !== array();
+                      return $value !== null && $value !== array() && $value !== "";
                     }))) {
                         throw new Exception(ldap_error($this->link));
                     }

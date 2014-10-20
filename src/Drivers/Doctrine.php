@@ -421,14 +421,13 @@ class Doctrine extends Driver implements DriverInterface
         $queryBuilder = $this->link->createQueryBuilder();
         $tableNames = $this->tablesFor($class);
         $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
-        $tableAlias = $this->link->quoteIdentifier('t');
-        $queryBuilder->delete($tableName, $tableAlias);
-        return $this->denormalizeSearch($queryBuilder, array($search), $class)->then(function($where) use ($queryBuilder, $options) {
+        $queryBuilder->delete($tableName);
+        return $this->denormalizeSearch($queryBuilder, array($search), $class)->then(function($where) use ($queryBuilder, $options, $class) {
             $queryBuilder->where($where);
             $this->applyOptions($queryBuilder, $options);
+            $this->invalidateCacheFor($class);
             return $queryBuilder->execute();
         });
-        //TODO invalid cache for class
         //TODO foreach $obj detach hydration map
     }
 
