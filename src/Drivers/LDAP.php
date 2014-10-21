@@ -236,11 +236,11 @@ class LDAP extends Driver implements DriverInterface
     {
         $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
         return $this->fetchFromCache($class . __METHOD__, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
-            return $this->search($class, $search, $options)->then(function ($search) use($class, $options, $cacheKey) {
+            return $this->search($class, $search)->then(function ($search) use($class, $cacheKey) {
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return 0;
                 }
-                return $this->storeToCache($cacheKey, count($this->applyOptions($class, $entry, $options)));
+                return $this->storeToCache($cacheKey, ldap_count_entries($this->link, $search));
             });
         });
     }
@@ -335,18 +335,15 @@ class LDAP extends Driver implements DriverInterface
             $attrsonly = static::ATTRSONLY;
             $sizelimit = static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
-            $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
-            foreach ($options as $option => $value) {
-                switch ($option) {
-                  case 'sort':
-                  case 'limit':
-                  case 'skip':
-                      break;
-                  default:
-                      throw new UnsupportedOption(__CLASS__, $option);
+            if (isset($options['limit']) && isset($options['skip']) && !isset($options['sort'])) {
+                if (ldap_control_paged_result($this->link, $options['skip'])) {
+                    $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
+                    ldap_control_paged_result_response($this->link, $search, $cookie, $estimated);
+                    ldap_control_paged_result($this->link, $options['limit'], false, $cookie);
+                    return ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
                 }
             }
-            return $search;
+            return ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
         });
     }
 
