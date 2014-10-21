@@ -19,12 +19,12 @@
 	"homepage" : "https://github.com/breadphp/storage",
 	"license" : "CC-BY-3.0",
 	"require" : {
-		"bread/caching" : "~1.0",
-		"bread/types" : "~0.1",
-		"doctrine/dbal" : "v2.5.0-BETA3",
 		"php" : ">=5.5",
-		"bread/configuration" : "~1.0",
-		"bread/promises" : "~1.0"
+		"doctrine/dbal": "2.5.0-RC2",
+		"bread/caching" : "~1.0",
+        "bread/configuration" : "~1.3",
+		"bread/promises" : "~1.0",
+		"bread/types" : "~0.3"
 	},
 	"require-dev" : {
 		"phpunit/phpunit" : "3.7.*",
