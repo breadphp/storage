@@ -335,13 +335,14 @@ class LDAP extends Driver implements DriverInterface
             $attrsonly = static::ATTRSONLY;
             $sizelimit = static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
-            if (isset($options['limit']) && isset($options['skip']) && !isset($options['sort'])) {
+            if ($options['skip'] > 0 && ldap_control_paged_result($this->link, (int) $options['skip'])) {
                 if (ldap_control_paged_result($this->link, $options['skip'])) {
                     $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
                     ldap_control_paged_result_response($this->link, $search, $cookie, $estimated);
                     ldap_control_paged_result($this->link, $options['limit'], false, $cookie);
                     return ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
                 }
+                $sizelimit = $options['skip'] + $options['limit'];
             }
             return ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
         });
@@ -378,14 +379,15 @@ class LDAP extends Driver implements DriverInterface
             }
             $multisort[] = &$results;
             call_user_func_array('array_multisort', $multisort);
+            $indexes = array_keys($results);
+            $skip = isset($options['skip']) ? $options['skip'] : 0;
+            $limit = isset($options['limit']) ? $options['limit'] : count($results);
+            foreach(array_slice($indexes, $skip, $limit) as $oid) {
+                $promises[$oid] = $results[$oid];
+            }
+            return $promises;
         }
-        $indexes = array_keys($results);
-        $skip = isset($options['skip']) ? $options['skip'] : 0;
-        $limit = isset($options['limit']) ? $options['limit'] : count($results);
-        foreach(array_slice($indexes, $skip, $limit) as $oid) {
-            $promises[$oid] = $results[$oid];
-        }
-        return $promises;
+        return $results;
     }
 
     protected function normalizeAttributes(array $attributes, $class)
@@ -412,6 +414,8 @@ class LDAP extends Driver implements DriverInterface
         }
         $type = Configuration::get($class, "properties.$name.type", $this->domain);
         switch ($type) {
+            case 'string' :
+                return $value;
             case 'integer':
                 return (int) $value;
             case 'float':
