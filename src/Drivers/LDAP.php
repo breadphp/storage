@@ -335,8 +335,8 @@ class LDAP extends Driver implements DriverInterface
             $attrsonly = static::ATTRSONLY;
             $sizelimit = static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
-            if ($options['skip'] > 0 && ldap_control_paged_result($this->link, (int) $options['skip'])) {
-                if (ldap_control_paged_result($this->link, $options['skip'])) {
+            if (isset($options['limit']) && isset($options['skip']) && !isset($options['sort'])) {
+                if ($options['skip'] > 0 && ldap_control_paged_result($this->link, (int) $options['skip'])) {
                     $search = ldap_search($this->link, $this->getBase($class), "({$filter})", $attributes, $attrsonly, $sizelimit, $timelimit, LDAP_DEREF_ALWAYS);
                     ldap_control_paged_result_response($this->link, $search, $cookie, $estimated);
                     ldap_control_paged_result($this->link, $options['limit'], false, $cookie);
