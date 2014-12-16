@@ -62,7 +62,7 @@ abstract class Driver
         return When::resolve($object);
     }
 
-    protected function hydrateObject($object, $properties, $class, $oid)
+    protected function hydrateObject($object, $properties, $class, $oid, $setObject = true)
     {
         $reflector = new ReflectionClass($class);
         $promises = array();
@@ -77,7 +77,7 @@ abstract class Driver
                 $promises[$name] = $this->normalizeValue($name, $value, $class);
             }
         }
-        return When::all($promises, function ($properties) use ($class, $reflector, $oid, $object) {
+        return When::all($promises, function ($properties) use ($class, $reflector, $object, $setObject) {
             //$object = $reflector->newInstanceWithoutConstructor();
             foreach ($properties as $name => $value) {
                 if (!$reflector->hasProperty($name)) {
@@ -87,7 +87,9 @@ abstract class Driver
                 $property->setAccessible(true);
                 $property->setValue($object, $value);
             }
-            $this->hydrationMap->getInstance($object)->setObject($object);
+            if ($setObject) {
+                $this->hydrationMap->getInstance($object)->setObject($object);
+            }
             return $object;
         });
     }

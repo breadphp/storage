@@ -362,7 +362,7 @@ class Doctrine extends Driver implements DriverInterface
         });
     }
 
-    public function fetch($class, array $search = array(), array $options = array())
+    public function fetch($class, array $search = array(), array $options = array(), $properties = array())
     {
         $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
         return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
@@ -371,49 +371,63 @@ class Doctrine extends Driver implements DriverInterface
             })->then(function ($oids) use ($cacheKey, $class) {
                 return $this->storeToCache($cacheKey, $oids);
             });
-        })->then(function ($oids) use ($class) {
-            return When::all(array_map(function ($oid) use ($class) {
-                return $this->getObject($class, $oid);
+        })->then(function ($oids) use ($class, $properties) {
+            return When::all(array_map(function ($oid) use ($class, $properties) {
+                return $this->getObject($class, $oid, null, $properties);
             }, $oids));
         })->then(array($this, 'buildCollection'));
     }
 
-    public function getObject($class, $oid, $instance = null)
+    public function getObject($class, $oid, $instance = null, $properties = array())
     {
         $hydrate = Configuration::get($class, 'storage.options.alwaysHydrate', $this->domain);
         if (!($object = $this->hydrationMap->objectExists($class, $oid)) || $hydrate) {
-            $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
-            $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid, $useCache) {
-                return $this->fetchPropertiesFromCache($class, $oid, $useCache)->then(null, function ($cacheKey) use ($class, $oid, $useCache) {
-                    $tableNames = $this->tablesFor($class);
-                    $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
-                    $tableAlias = $this->link->quoteIdentifier('t');
-                    $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
-                    $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
-                    $propertiesQueryBuilder = $this->link->createQueryBuilder();
-                    $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
-                        ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
-                        ->execute()->fetch(PDO::FETCH_ASSOC);
-                    foreach ($tableNames as $multiplePropertyTableName) {
-                        list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
-                        $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
-                        $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
-                        $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
-                            ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
-                            ->execute()->fetchAll(PDO::FETCH_COLUMN);
-                    }
-                    if ($values === false) {
-                        var_dump(sprintf("Object %s (%s) does not exist.", $oid, $class));
-                        throw new Exception(sprintf("Object %s (%s) does not exist.", $oid, $class));
-                    }
-                    return $this->storePropertiesToCache($cacheKey, $values, $useCache);
-                })->then(function ($values) use ($object, $class, $oid) {
-                    return $this->hydrateObject($object, $values, $class, $oid);
+            if (!empty($properties)) {
+                $reflector = new ReflectionClass($class);
+                $object = $reflector->newInstanceWithoutConstructor();
+                $values = $this->fetchFromDB($class, $oid, $properties);
+                $object = $this->hydrateObject($object, $values, $class, $oid, false);
+            } else {
+                $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid, $properties) {
+                    $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
+                    return $this->fetchPropertiesFromCache($class, $oid, $useCache)->then(null, function ($cacheKey) use ($class, $oid, $useCache, $properties) {
+                        $values = $this->fetchFromDB($class, $oid, $properties);
+                        return $this->storePropertiesToCache($cacheKey, $values, $useCache);
+                    })->then(function ($values) use ($object, $class, $oid, $properties) {
+                        return $this->hydrateObject($object, $values, $class, $oid);
+                    });
                 });
-            });
+            }
         }
         return ($object instanceof Promise) ? $object : When::resolve($object);
     }
+
+     protected function fetchFromDB($class, $oid, $properties = array()) {
+         $tableNames = $this->tablesFor($class);
+         $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+         $tableAlias = $this->link->quoteIdentifier('t');
+         $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
+         $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
+         $propertiesQueryBuilder = $this->link->createQueryBuilder();
+         $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
+             ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
+             ->execute()->fetch(PDO::FETCH_ASSOC);
+         foreach ($tableNames as $multiplePropertyTableName) {
+             list(, $propertyName) = explode(self::MULTIPLE_PROPERTY_TABLE_SEPARATOR, $multiplePropertyTableName) + array(null, null);
+             $multiplePropertyTableName = $this->link->quoteIdentifier($multiplePropertyTableName);
+             $multiplePropertyQueryBuilder = $this->link->createQueryBuilder();
+             $values[$propertyName] = $multiplePropertyQueryBuilder->select($this->link->quoteIdentifier($propertyName))->from($multiplePropertyTableName, $tableAlias)
+                 ->where($multiplePropertyQueryBuilder->expr()->eq($oidIdentifier, $multiplePropertyQueryBuilder->createNamedParameter($oid)))
+                 ->execute()->fetchAll(PDO::FETCH_COLUMN);
+         }
+         $values = empty($properties) ? $values : array_intersect_key($values, array_flip($properties));
+         if ($values === false) {
+             var_dump(sprintf("Object %s (%s) does not exist.", $oid, $class));
+             throw new Exception(sprintf("Object %s (%s) does not exist.", $oid, $class));
+         }
+         return $values;
+     }
+
 
     public function purge($class, array $search = array(), array $options = array())
     {

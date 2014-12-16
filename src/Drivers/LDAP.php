@@ -253,24 +253,31 @@ class LDAP extends Driver implements DriverInterface
         });
     }
 
-    public function fetch($class, array $search = array(), array $options = array())
+    public function fetch($class, array $search = array(), array $options = array(), $properties = array())
     {
         $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
-        return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
-            return $this->search($class, $search, $options)->then(function ($search) use($class, $options) {
+        return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options, $properties) {
+            return $this->search($class, $search, $options, $properties)->then(function ($search) use($class, $options, $properties) {
                 $promises = array();
                 if (!$entry = ldap_first_entry($this->link, $search)) {
                     return $promises;
                 }
-                foreach($this->applyOptions($class, $entry, $options) as $oid=>$attributes) {
+                foreach($this->applyOptions($class, $entry, $options) as $oid => $attributes) {
                     $hydrate = Configuration::get($class, 'storage.options.alwaysHydrate', $this->domain);
                     if (($object = $this->hydrationMap->objectExists($class, $oid)) && !$hydrate) {
                         $promises[$oid] = When::resolve($object);
                     } else {
-                        $instance = $object ? $this->hydrationMap->getInstance($object) : null;
-                        $promises[$oid] = $this->createObjectPlaceholder($class, $oid, $instance)->then(function($object) use ($attributes, $class, $oid) {
-                            return $this->hydrateObject($object, $attributes, $class, $oid);
-                        });
+                        if (!empty($properties)) {
+                            $reflector = new ReflectionClass($class);
+                            $object = $reflector->newInstanceWithoutConstructor();
+                            $attributes = array_intersect_key($attributes, array_flip($properties));
+                            $promises[$oid] = $this->hydrateObject($object, $attributes, $class, $oid, false);
+                        } else {
+                            $instance = $object ? $this->hydrationMap->getInstance($object) : null;
+                            $promises[$oid] = $this->createObjectPlaceholder($class, $oid, $instance)->then(function($object) use ($attributes, $class, $oid) {
+                                return $this->hydrateObject($object, $attributes, $class, $oid);
+                            });
+                        }
                     }
                 }
                 return When::all($promises);
@@ -324,14 +331,14 @@ class LDAP extends Driver implements DriverInterface
     public function purge($class, array $search = array(), array $options = array())
     {}
 
-    protected function search($class, array $search = array(), array $options = array())
+    protected function search($class, array $search = array(), array $options = array(), array $properties = array())
     {
         $this->connect();
         $filter = array_merge($this->filter, array(
             'objectClass' => array('$all' => Configuration::get($class, 'storage.options.objectClass', $this->domain)
         )));
-        return $this->denormalizeSearch($class, array($filter, $search))->then(function ($filter) use ($class, $options) {
-            $attributes = $this->filterAttributes($class);
+        return $this->denormalizeSearch($class, array($filter, $search))->then(function ($filter) use ($class, $options, $properties) {
+            $attributes = empty($properties) ? $this->filterAttributes($class) : $properties;
             $attrsonly = static::ATTRSONLY;
             $sizelimit = static::SIZELIMIT;
             $timelimit = static::TIMELIMIT;
