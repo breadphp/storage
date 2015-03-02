@@ -393,6 +393,10 @@ class LDAP extends Driver implements DriverInterface
                 $promises[$oid] = $results[$oid];
             }
             return $promises;
+        } elseif (isset($options['limit'])) {
+            $skip = isset($options['skip']) ? $options['skip'] : 0;
+            $limit = $options['limit'];
+            $results = array_slice($results, $skip, $limit);
         }
         return $results;
     }

@@ -330,9 +330,9 @@ class Doctrine extends Driver implements DriverInterface
 
     public function count($class, array $search = array(), array $options = array())
     {
-      return $this->select($class, $search, $options)->then(function($result) {
-          return $result->rowCount();
-      });
+        return $this->select($class, $search, $options, true)->then(function($result) {
+            return $result->rowCount();
+        });
     }
 
     public function first($class, array $search = array(), array $options = array())
@@ -367,25 +367,23 @@ class Doctrine extends Driver implements DriverInterface
         $useCache = Configuration::get($class, 'storage.options.cache', $this->domain);
         return $this->fetchFromCache($class, $search, $options, $useCache)->then(null, function ($cacheKey) use ($class, $search, $options) {
             return $this->select($class, $search, $options)->then(function ($result) use($class){
-                return $result->fetchAll(PDO::FETCH_COLUMN, 0);
-            })->then(function ($oids) use ($cacheKey, $class) {
-                return $this->storeToCache($cacheKey, $oids);
+                return $result->fetchAll(PDO::FETCH_ASSOC);
             });
         })->then(function ($oids) use ($class, $properties) {
             return When::all(array_map(function ($oid) use ($class, $properties) {
-                return $this->getObject($class, $oid, null, $properties);
+                return $this->getObject($class, $oid[Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME], null, $properties, $oid);
             }, $oids));
         })->then(array($this, 'buildCollection'));
     }
 
-    public function getObject($class, $oid, $instance = null, $properties = array())
+    public function getObject($class, $oid, $instance = null, $properties = array(), $db = array())
     {
         $hydrate = Configuration::get($class, 'storage.options.alwaysHydrate', $this->domain);
         if (!($object = $this->hydrationMap->objectExists($class, $oid)) || $hydrate) {
             if (!empty($properties)) {
                 $reflector = new ReflectionClass($class);
                 $object = $reflector->newInstanceWithoutConstructor();
-                $values = $this->fetchFromDB($class, $oid, $properties);
+                $values = $this->fetchFromDB($class, $oid, $properties, $db);
                 $object = $this->hydrateObject($object, $values, $class, $oid, false);
             } else {
                 $object = $this->createObjectPlaceholder($class, $oid, $instance)->then(function ($object) use ($class, $oid, $properties) {
@@ -402,14 +400,14 @@ class Doctrine extends Driver implements DriverInterface
         return ($object instanceof Promise) ? $object : When::resolve($object);
     }
 
-     protected function fetchFromDB($class, $oid, $properties = array()) {
+     protected function fetchFromDB($class, $oid, $properties = array(), $db = array()) {
          $tableNames = $this->tablesFor($class);
          $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
          $tableAlias = $this->link->quoteIdentifier('t');
          $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
          $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
          $propertiesQueryBuilder = $this->link->createQueryBuilder();
-         $values = $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
+         $values = $db ? $db : $propertiesQueryBuilder->select('*')->from($tableName, $tableAlias)
              ->where($propertiesQueryBuilder->expr()->eq($oidIdentifier, $propertiesQueryBuilder->createNamedParameter($oid)))
              ->execute()->fetch(PDO::FETCH_ASSOC);
          foreach ($tableNames as $multiplePropertyTableName) {
@@ -445,7 +443,7 @@ class Doctrine extends Driver implements DriverInterface
         //TODO foreach $obj detach hydration map
     }
 
-    protected function select($class, array $search = array(), array $options = array())
+    protected function select($class, array $search = array(), array $options = array(), $count = false)
     {
         $this->connect();
         $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
@@ -454,8 +452,9 @@ class Doctrine extends Driver implements DriverInterface
         $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
         $tableAlias = $this->link->quoteIdentifier('t');
         $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
-        $projection = "$tableAlias.$oidIdentifier";
-        $queryBuilder->select($projection)->groupBy($projection)->from($tableName, $tableAlias);
+        $groupby = "$tableAlias.$oidIdentifier";
+        $projection1 = $count ? $groupby : "$tableAlias.*";
+        $queryBuilder->select($projection1)->groupBy($groupby)->from($tableName, $tableAlias);
         foreach ($tableNames as $i => $joinTableName) {
             $joinTableAlias = $this->link->quoteIdentifier('j' . $i);
             $queryBuilder->leftJoin($tableAlias, $this->link->quoteIdentifier($joinTableName), $joinTableAlias, "$tableAlias.$oidIdentifier = $joinTableAlias.$oidIdentifier");
@@ -464,7 +463,7 @@ class Doctrine extends Driver implements DriverInterface
             $queryBuilder->where($where);
             $this->applyOptions($queryBuilder, $options);
             return $queryBuilder->execute();
-      });
+        });
     }
 
     protected function applyOptions($queryBuilder, $options)
@@ -666,8 +665,8 @@ class Doctrine extends Driver implements DriverInterface
                         $function = 'gte';
                         break;
                     case '$ne':
-                        return $this->denormalizeValue($v, $property, $class)->then(function ($value) use ($queryBuilder, $property) {
-                        $field = $this->link->quoteIdentifier($property);
+                        return $this->denormalizeValue($v, $property, $class)->then(function ($value) use ($queryBuilder, $property, $class) {
+                            $field = $this->link->quoteIdentifier($property);
                             $subQueryBuilder = $this->link->createQueryBuilder();
                             if($value) {
                                 $subQueryBuilder
@@ -676,11 +675,18 @@ class Doctrine extends Driver implements DriverInterface
                                     ->add('join', $queryBuilder->getQueryPart('join'))
                                     ->where($queryBuilder->expr()->eq($field, $queryBuilder->createNamedParameter($value)));
                             } else {
-                                $subQueryBuilder
-                                    ->add('select', $queryBuilder->getQueryPart('select'))
-                                    ->add('from', $queryBuilder->getQueryPart('from'))
-                                    ->add('join', $queryBuilder->getQueryPart('join'))
-                                    ->where($queryBuilder->expr()->isNull($field));
+                                $objectIdFieldName = Configuration::get($class, 'storage.options.oid', $this->domain) ? : self::OBJECTID_FIELD_NAME;
+                                $tableNames = $this->tablesFor($class);
+                                $tableName = $this->link->quoteIdentifier(array_shift($tableNames));
+                                $tableAlias = $this->link->quoteIdentifier('t');
+                                $oidIdentifier = $this->link->quoteIdentifier($objectIdFieldName);
+                                $projection = "$tableAlias.$oidIdentifier";
+                                $subQueryBuilder->select($projection)->groupBy($projection)->from($tableName, $tableAlias)->add('join', $queryBuilder->getQueryPart('join'))->where($queryBuilder->expr()->isNull($field));
+//                                 $subQueryBuilder
+//                                     ->add('select', $queryBuilder->getQueryPart('select') . $oidIdentifier)
+//                                     ->add('from', $queryBuilder->getQueryPart('from'))
+//                                     ->add('join', $queryBuilder->getQueryPart('join'))
+//                                     ->where($queryBuilder->expr()->isNull($field));
                             }
                             // TODO vvvvv -> guess alias and identifier
                             return "t._id NOT IN (" . $subQueryBuilder->getSQL() . ")";
