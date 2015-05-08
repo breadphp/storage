@@ -68,6 +68,7 @@ Configuration::defaults('Bread\Storage\Manager', array(
     'drivers' => array(
         'mongodb' => 'Bread\Storage\Drivers\MongoDB',
         'mysql' => 'Bread\Storage\Drivers\Doctrine',
+        'sqlsrv' => 'Bread\Storage\Drivers\Doctrine',
         'db2' => 'Bread\Storage\Drivers\Doctrine',
         'ldap' => 'Bread\Storage\Drivers\LDAP'
     )

@@ -102,6 +102,14 @@ class Instance
         if ($this->state === self::STATE_NEW) {
             return $this->getProperties($object);
         }
+//         $o = json_encode($this->originalObject, JSON_PRETTY_PRINT);
+//         $o = json_decode($o, true);
+//         $o['notes'] = array();
+//         var_dump(__LINE__, json_encode($o, JSON_PRETTY_PRINT));
+//         $ob = json_encode($object, JSON_PRETTY_PRINT);
+//         $ob = json_decode($ob, true);
+//         $ob['notes'] = array();
+//         var_dump(__LINE__, json_encode($ob, JSON_PRETTY_PRINT));
         $modifiedProperties = array();
         foreach ($this->reflector->getProperties() as $property) {
             $property->setAccessible(true);
